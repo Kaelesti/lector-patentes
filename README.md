@@ -6,7 +6,7 @@ PWA que lee placas patentes con la cámara del celular y las coteja con una base
 
 ## Cómo funciona
 - La detección de la placa y la lectura de caracteres ocurren **dentro del teléfono** (ONNX Runtime Web). Las imágenes no se envían a ningún servidor.
-- La base se descarga desde un script de Google Apps Script asociado a la planilla, que entrega solo patente, tipo (reporte/prueba), estado y fecha.
+- La base se descarga desde un script de Google Apps Script asociado a la planilla, que entrega solo patente, nivel de alerta, estado, fechas, placas sustraídas y marca/modelo/color.
 - Funciona sin señal: la app, los modelos y la última base descargada quedan guardados en el teléfono.
 - En vivo, una patente se confirma cuando se lee igual en al menos 2 cuadros.
 - Niveles de resultado:
