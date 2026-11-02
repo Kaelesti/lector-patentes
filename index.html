@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lector de patentes</title>
+<meta name="description" content="Lee placas patentes con la cámara y las coteja con reportes vecinales.">
+<meta name="theme-color" content="#0B1320">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root{
+    --bg:#0B1320; --panel:#13213A; --panel2:#1A2B4A; --line:#26395E;
+    --text:#E8EEF7; --muted:#93A4BF; --accent:#F2B705;
+    --red:#E5484D; --amber:#F5A524; --green:#30A46C; --blue:#3E8EDE;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px}
+  header h1{font-size:18px;margin:0;flex:1;letter-spacing:.2px}
+  .pill{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap}
+  .pill.ok{color:#BFE8D0}
+  .pill.warn{color:#FFD9A0}
+  button{font:inherit;color:inherit;border:0;border-radius:12px;background:var(--panel2);
+    padding:12px 14px;min-height:48px;cursor:pointer}
+  button:active{transform:scale(.98)}
+  button.primary{background:var(--accent);color:#1B1300;font-weight:700}
+  button.ghost{background:transparent;border:1px solid var(--line)}
+  button.icon{min-width:48px;padding:0 12px}
+  button[disabled]{opacity:.5}
+  main{padding:0 16px 32px;max-width:720px;margin:0 auto}
+  #camara{position:relative;overflow:hidden;border-radius:16px;background:#000;height:52vh;min-height:260px}
+  #camara video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:center}
+  #camara canvas{position:absolute;inset:0;width:100%;height:100%}
+  #camaraMsg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:24px;color:var(--muted);font-size:15px}
+  #camaraMsg[hidden]{display:none}
+  .sobre{position:absolute;top:10px;right:10px;display:flex;gap:6px}
+  .sobre button{min-height:36px;min-width:44px;padding:0 10px;font-size:14px;background:rgba(0,0,0,.55);border-radius:999px}
+  .sobre button.on{background:var(--accent);color:#1B1300;font-weight:700}
+  .sobre button[hidden]{display:none}
+  #estadoMotor{position:absolute;left:10px;bottom:10px;font-size:12px;background:rgba(0,0,0,.55);
+    padding:4px 8px;border-radius:8px;color:#cfd8e6}
+  .fila{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .fila > *{flex:1}
+  #manual{display:flex;gap:8px;margin-top:10px}
+  #manual input{flex:1;min-width:0;font:inherit;font-size:20px;letter-spacing:3px;text-transform:uppercase;
+    background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  #resultado{margin-top:14px;border-radius:16px;padding:16px;background:var(--panel);border:2px solid var(--line);display:none}
+  #resultado.show{display:block}
+  #resultado .placa{font:800 34px/1 ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:4px}
+  #resultado .titulo{font-weight:700;font-size:18px;margin:8px 0 4px}
+  #resultado .detalle{color:var(--muted);font-size:14px}
+  #resultado .acciones{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  #resultado .acciones > *{flex:1}
+  #resultado.reporte{border-color:var(--red);background:#2A1418}
+  #resultado.posible{border-color:var(--amber);background:#2A2012}
+  #resultado.prueba{border-color:var(--blue);background:#12223A}
+  #resultado.sin{border-color:var(--green)}
+  a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit;
+    background:var(--panel2);border-radius:12px;min-height:48px;padding:0 12px;font-weight:600}
+  a.btn.rojo{background:var(--red);color:#fff}
+  h2{font-size:15px;color:var(--muted);font-weight:600;margin:22px 0 8px;display:flex;align-items:center;gap:8px}
+  h2 span{flex:1}
+  h2 button{min-height:36px;padding:4px 10px;font-size:13px}
+  #historial{list-style:none;margin:0;padding:0}
+  #historial li{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel);
+    border-radius:12px;margin-bottom:6px;flex-wrap:wrap}
+  #historial .p{font:700 18px ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:2px;min-width:92px}
+  #historial .m{font-size:12px;color:var(--muted);flex:1;min-width:120px}
+  #historial .tag{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--panel2)}
+  #historial .tag.reporte{background:var(--red);color:#fff}
+  #historial .tag.posible{background:var(--amber);color:#1B1300}
+  #historial .tag.prueba{background:var(--blue);color:#fff}
+  #historial .eval{display:flex;gap:6px}
+  #historial .eval button{min-height:36px;min-width:40px;padding:0 8px;font-size:15px}
+  #historial .eval button.on.si{background:var(--green)}
+  #historial .eval button.on.no{background:var(--red)}
+  #historial .real{display:flex;gap:6px;width:100%}
+  #historial .real input{flex:1;min-width:0;font:inherit;text-transform:uppercase;background:var(--bg);color:var(--text);
+    border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+  #historial .real button{min-height:36px;padding:0 12px}
+  .vacio{color:var(--muted);font-size:14px;padding:6px 2px}
+  dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:16px;
+    width:min(560px,calc(100vw - 32px));padding:20px}
+  dialog::backdrop{background:rgba(0,0,0,.6)}
+  dialog h3{margin:0 0 12px}
+  dialog label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  dialog input{width:100%;font:inherit;background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px}
+  dialog p{font-size:13px;color:var(--muted)}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000c;color:#fff;
+    padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+  #toast.show{opacity:1}
+  .aviso{font-size:12px;color:var(--muted);margin-top:24px;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lector de patentes</h1>
+  <span id="estadoBase" class="pill warn">Sin base</span>
+  <button id="btnConfig" class="icon ghost" aria-label="Configuración">⚙</button>
+</header>
+
+<main>
+  <div id="camara">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="camaraMsg">Toca <b>&nbsp;En vivo&nbsp;</b> para leer patentes con la cámara,<br>o <b>&nbsp;Foto&nbsp;</b> para analizar una imagen.</div>
+    <div id="estadoMotor" hidden></div>
+    <div class="sobre zoom" role="group" aria-label="Acercamiento">
+      <button id="btnLinterna" hidden aria-label="Linterna">🔦</button>
+      <button data-z="1" class="on">1x</button>
+      <button data-z="1.5">1,5x</button>
+      <button data-z="2">2x</button>
+    </div>
+  </div>
+
+  <div class="fila">
+    <button id="btnVivo" class="primary">▶ En vivo</button>
+    <button id="btnFoto">📷 Foto</button>
+  </div>
+  <input id="archivo" type="file" accept="image/*" capture="environment" hidden>
+
+  <form id="manual" autocomplete="off">
+    <input id="txtManual" placeholder="ABCD12" maxlength="8" inputmode="text" aria-label="Patente manual">
+    <button class="ghost" type="submit">Consultar</button>
+  </form>
+
+  <section id="resultado" aria-live="assertive"></section>
+
+  <h2><span>Lecturas de esta sesión</span>
+    <button id="btnCopiar" class="ghost">Copiar para planilla</button>
+    <button id="btnBorrar" class="ghost">Borrar</button>
+  </h2>
+  <ul id="historial"></ul>
+  <div id="historialVacio" class="vacio">Aún no hay lecturas.</div>
+
+  <p class="aviso">Una coincidencia <b>no</b> confirma que un auto sea robado: solo indica que su patente
+    aparece en un reporte vecinal. No intervengas ni confrontes a nadie. Verifica en fuente oficial y, si corresponde,
+    llama al <b>133</b>. Esta app no guarda fotos ni ubicación.</p>
+</main>
+
+<dialog id="dlgConfig">
+  <h3>Configuración</h3>
+  <form id="frmConfig" method="dialog">
+    <label for="cfgUrl">URL del script (termina en /exec)</label>
+    <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" required>
+    <label for="cfgClave">Clave</label>
+    <input id="cfgClave" type="password" required>
+    <p id="cfgInfo"></p>
+    <div class="fila">
+      <button type="button" id="cfgCancelar" class="ghost">Cerrar</button>
+      <button type="submit" class="primary">Guardar y actualizar base</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast"></div>
+
+<script src="vendor/ort/ort.wasm.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
