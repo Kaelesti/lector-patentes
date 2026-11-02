@@ -98,11 +98,24 @@ function indexar() {
     idxCanon.get(c).push(e);
   }
   pintarEstadoBase();
+  const enl = $('#lnkNuevo');
+  if (enl) { const u = urlFormulario(''); enl.hidden = !u; if (u) enl.href = u; }
 }
+
+function urlFormulario(p) {
+  const f = base?.formulario; if (!f) return '';
+  return f.replace('PATENTE', encodeURIComponent(p));
+}
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const COLOR = { encargo: '#E5484D', placa: '#A869E0', vecinal: '#F5A524', posible: '#F5A524', prueba: '#3E8EDE' };
+const colorLectura = (l) => COLOR[l.estado] || (l.valida ? '#30A46C' : '#F2B705');
+
+// Nivel de alerta de un registro: encargo (oficial) · placa (placas sustraídas, oficial) · vecinal · prueba
+const nivelDe = (r) => r.n || (r.t === 'prueba' ? 'prueba' : 'vecinal'); // compatible con el script v1
 
 function buscar(p) {
   const exacta = idxExacto.get(p);
-  if (exacta) return { tipo: exacta.t === 'prueba' ? 'prueba' : 'reporte', entrada: exacta };
+  if (exacta) return { tipo: nivelDe(exacta), entrada: exacta };
   const pos = idxCanon.get(canonica(p));
   if (pos && pos.length) return { tipo: 'posible', entrada: pos[0], otras: pos };
   return { tipo: 'sin' };
@@ -111,7 +124,7 @@ function buscar(p) {
 function pintarEstadoBase() {
   const el = $('#estadoBase');
   if (!base) { el.textContent = 'Sin base'; el.className = 'pill warn'; return; }
-  const n = base.patentes.filter((r) => r.t !== 'prueba').length;
+  const n = base.patentes.filter((r) => nivelDe(r) !== 'prueba').length;
   el.textContent = `Base: ${n} · ${hace(base.ts)}`;
   el.className = 'pill ' + (Date.now() - base.ts > 3 * 86400000 ? 'warn' : 'ok');
 }
@@ -125,7 +138,7 @@ async function actualizarBase(silencioso = false) {
     const j = await r.json();
     if (j.error) throw new Error(j.error === 'no autorizado' ? 'Clave incorrecta' : j.error);
     if (!Array.isArray(j.patentes)) throw new Error('Respuesta inesperada del script');
-    base = { ts: Date.now(), patentes: j.patentes };
+    base = { ts: Date.now(), patentes: j.patentes, formulario: j.formulario || '' };
     guardarLS(LS.base, base); indexar();
     if (!silencioso) toast(`Base actualizada: ${j.patentes.length} patentes`);
     return true;
@@ -253,8 +266,7 @@ function dibujarCajas(R, lecturas) {
   for (const l of lecturas) {
     const x = (l.caja.x1 - R.x) / R.w * cw, y = (l.caja.y1 - R.y) / R.h * ch;
     const w = (l.caja.x2 - l.caja.x1) / R.w * cw, h = (l.caja.y2 - l.caja.y1) / R.h * ch;
-    const color = l.estado === 'reporte' ? '#E5484D' : l.estado === 'posible' ? '#F5A524'
-      : l.estado === 'prueba' ? '#3E8EDE' : l.valida ? '#30A46C' : '#F2B705';
+    const color = colorLectura(l);
     octx.lineWidth = 3; octx.strokeStyle = color; octx.strokeRect(x, y, w, h);
     const t = l.mostrar || '…';
     octx.font = 'bold 16px ui-monospace, monospace';
@@ -331,9 +343,9 @@ function procesarLecturas(lecturas, modo) {
 let audioCtx = null;
 function alertaSonora(tipo) {
   try {
-    navigator.vibrate?.(tipo === 'reporte' ? [250, 120, 250, 120, 250] : [150]);
+    navigator.vibrate?.(tipo === 'encargo' || tipo === 'placa' ? [250, 120, 250, 120, 250] : [150]);
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const tonos = tipo === 'reporte' ? [880, 660, 880] : tipo === 'posible' ? [660, 660] : [523, 784];
+    const tonos = tipo === 'encargo' || tipo === 'placa' ? [880, 660, 880] : tipo === 'prueba' ? [523, 784] : [660, 660];
     tonos.forEach((fq, i) => {
       const o = audioCtx.createOscillator(), g = audioCtx.createGain();
       o.frequency.value = fq; o.connect(g); g.connect(audioCtx.destination);
@@ -343,27 +355,70 @@ function alertaSonora(tipo) {
   } catch {}
 }
 
+const dias = (iso) => { if (!iso) return null; const t = Date.parse(iso + 'T12:00:00'); return isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 86400000)); };
+const textoDias = (d) => d === 0 ? 'hoy' : d === 1 ? 'ayer' : `hace ${d} días`;
+
+/** Línea de confianza: qué tan respaldada y reciente es la información. */
+function lineaConfianza(n, e) {
+  let pct, txt;
+  if (n === 'encargo' || n === 'placa') {
+    const d = dias(e.fv);
+    pct = d === null ? 60 : d <= 7 ? 100 : d <= 30 ? 75 : 45;
+    txt = 'Fuente oficial · ' + (d === null ? 'fecha de verificación no registrada' : 'verificado ' + textoDias(d));
+    if (d !== null && d > 30) txt += ' · conviene volver a verificar';
+  } else {
+    const d = dias(e.f);
+    pct = e.sf || d === null ? 15 : d <= 7 ? 40 : 28;
+    txt = 'Reporte vecinal sin verificación oficial · ' + (e.sf || d === null ? 'antiguo, sin fecha' : 'reportado ' + textoDias(d));
+  }
+  return `<div class="confianza"><div class="barra"><i style="width:${pct}%;background:${COLOR[n]}"></i></div><span>${esc(txt)}</span></div>`;
+}
+
+function datosVehiculo(e) {
+  const v = [e.ma, e.mo, e.co].filter(Boolean).map(esc).join(' · ');
+  return v ? `<div class="vehiculo">Vehículo registrado: <b>${v}</b></div>` : '';
+}
+
 function mostrarResultado(p, b) {
   const el = $('#resultado'); el.className = 'show ' + b.tipo;
-  const e = b.entrada;
-  let titulo, detalle = '', acciones = '';
-  const verif = `<a class="btn" href="https://www.autoseguro.gob.cl/" target="_blank" rel="noopener" data-copiar="${p}">Verificar en fuente oficial</a>`;
-  if (b.tipo === 'reporte') {
-    titulo = '⚠ Coincide con un reporte vecinal';
-    detalle = `Estado: ${e.e || '—'}${e.f ? ' · reportado ' + e.f : ''}. No intervengas. Verifica en fuente oficial y, si corresponde, llama al 133.`;
-    acciones = verif + '<a class="btn rojo" href="tel:133">Llamar 133</a>';
+  const e = b.entrada, n = e ? nivelDe(e) : null;
+  let titulo, detalle = '', extra = '', acciones = '';
+  const verif = `<a class="btn" href="https://www.autoseguro.gob.cl/" target="_blank" rel="noopener" data-copiar="${p}">🔎 Verificar oficial</a>`;
+  const fUrl = urlFormulario(p);
+  const informar = fUrl ? `<a class="btn ghost" href="${esc(fUrl)}" target="_blank" rel="noopener">✉ Informar cambio</a>` : '';
+
+  if (b.tipo === 'encargo') {
+    titulo = '🔴 Encargo por robo vigente (fuente oficial)';
+    detalle = 'No intervengas ni confrontes. Toma distancia y llama al 133 con la patente y la ubicación.';
+    extra = datosVehiculo(e) + lineaConfianza(n, e);
+    acciones = '<a class="btn rojo" href="tel:133">📞 Llamar 133</a>' + verif + informar;
+  } else if (b.tipo === 'placa') {
+    const cual = e.ps === 'Ambas' ? 'ambas placas' : e.ps === 'Delantera' ? 'la placa delantera' : e.ps === 'Trasera' ? 'la placa trasera' : 'placas';
+    titulo = '🟣 Placa sustraída (fuente oficial)';
+    detalle = `El vehículo original no tiene encargo, pero ${cual} figura${e.ps === 'Ambas' ? 'n' : ''} como robada${e.ps === 'Ambas' ? 's' : ''}. ` +
+      'Compara sin acercarte: <b>¿coinciden marca, modelo y color?</b> <b>¿la placa delantera y la trasera tienen el mismo número?</b> ' +
+      'Si algo no calza, llama al 133.';
+    extra = datosVehiculo(e) + lineaConfianza(n, e);
+    acciones = verif + '<a class="btn rojo" href="tel:133">📞 Llamar 133</a>' + informar;
+  } else if (b.tipo === 'vecinal') {
+    titulo = '🟠 Coincide con un reporte vecinal';
+    detalle = 'Aún no está verificado en fuente oficial. Verifícalo antes de concluir nada y no intervengas.';
+    extra = datosVehiculo(e) + lineaConfianza(n, e);
+    acciones = verif + '<a class="btn" href="tel:133">📞 Llamar 133</a>' + informar;
   } else if (b.tipo === 'posible') {
+    const ref = { encargo: 'un encargo oficial', placa: 'una placa sustraída', vecinal: 'un reporte vecinal', prueba: 'una patente de prueba' }[n] || 'un registro';
     titulo = 'Posible coincidencia: revisa la patente';
-    detalle = `Se leyó ${p}, parecida a <b>${e.p}</b> (${e.t === 'prueba' ? 'patente de prueba' : 'reporte vecinal'}). Mira la placa con tus ojos antes de concluir nada.`;
-    acciones = verif;
+    detalle = `Se leyó <b>${esc(p)}</b>, muy parecida a <b>${esc(e.p)}</b> (${ref}). Puede ser un error de lectura: mira la placa con tus ojos antes de concluir nada.`;
+    acciones = `<a class="btn" href="https://www.autoseguro.gob.cl/" target="_blank" rel="noopener" data-copiar="${esc(e.p)}">Verificar ${esc(e.p)}</a>`;
   } else if (b.tipo === 'prueba') {
-    titulo = '✔ Patente de prueba reconocida';
+    titulo = '🔵 Patente de prueba reconocida';
     detalle = 'La lectura y el cotejo funcionan correctamente.';
   } else {
     titulo = 'Sin reportes en la base vecinal';
-    detalle = base ? 'Esto no descarta un encargo oficial.' : 'Aún no hay base cargada: configúrala en ⚙.';
+    detalle = base ? 'Esto no descarta un encargo oficial. Si tienes dudas, verifica en fuente oficial.' : 'Aún no hay base cargada: configúrala en ⚙.';
+    acciones = verif + informar;
   }
-  el.innerHTML = `<div class="placa">${p}</div><div class="titulo">${titulo}</div><div class="detalle">${detalle}</div>` +
+  el.innerHTML = `<div class="placa">${esc(p)}</div><div class="titulo">${titulo}</div><div class="detalle">${detalle}</div>${extra}` +
     (acciones ? `<div class="acciones">${acciones}</div>` : '');
   if (b.tipo !== 'sin') alertaSonora(b.tipo);
 }
@@ -380,7 +435,7 @@ function registrar(x) {
   historial = historial.slice(0, 300); guardarLS(LS.hist, historial); pintarHistorial();
 }
 
-const ETIQ = { reporte: 'Reporte', posible: 'Revisar', prueba: 'Prueba', sin: 'Sin reporte' };
+const ETIQ = { encargo: 'Encargo', placa: 'Placa sustraída', vecinal: 'Reporte vecinal', reporte: 'Reporte', posible: 'Revisar', prueba: 'Prueba', sin: 'Sin reporte' };
 function pintarHistorial() {
   const ul = $('#historial'); ul.innerHTML = '';
   $('#historialVacio').hidden = historial.length > 0;
@@ -453,7 +508,7 @@ $('#archivo').addEventListener('change', async (ev) => {
   const ox = (cw - img.width * s) / 2, oy = (ch - img.height * s) / 2;
   octx.drawImage(img, ox, oy, img.width * s, img.height * s);
   for (const l of lect) {
-    const color = l.estado === 'reporte' ? '#E5484D' : l.estado === 'posible' ? '#F5A524' : l.estado === 'prueba' ? '#3E8EDE' : l.valida ? '#30A46C' : '#F2B705';
+    const color = colorLectura(l);
     octx.lineWidth = 3; octx.strokeStyle = color;
     octx.strokeRect(ox + l.caja.x1 * s, oy + l.caja.y1 * s, (l.caja.x2 - l.caja.x1) * s, (l.caja.y2 - l.caja.y1) * s);
   }
@@ -509,5 +564,10 @@ if (!leerLS(LS.config, null)) setTimeout(abrirConfig, 400);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && navigator.onLine && (!base || Date.now() - base.ts > 10 * 60000)) actualizarBase(true);
 });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  const habiaControlador = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Al publicar una versión nueva, recargar una vez para usarla
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (habiaControlador) location.reload(); });
+}
 window.__lp = { normalizarChilena, buscar, analizar, cargarMotor }; // para pruebas

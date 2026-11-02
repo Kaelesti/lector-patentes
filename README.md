@@ -9,7 +9,14 @@ PWA que lee placas patentes con la cámara del celular y las coteja con una base
 - La base se descarga desde un script de Google Apps Script asociado a la planilla, que entrega solo patente, tipo (reporte/prueba), estado y fecha.
 - Funciona sin señal: la app, los modelos y la última base descargada quedan guardados en el teléfono.
 - En vivo, una patente se confirma cuando se lee igual en al menos 2 cuadros.
-- El cotejo distingue tres casos: coincidencia exacta, **posible coincidencia** (caracteres que se confunden: 0/O/D, 8/B, 5/S, 2/Z, 6/G, 1/I/L) y sin reporte.
+- Niveles de resultado:
+  - 🔴 **Encargo oficial** del vehículo (verificado en autoseguro.gob.cl).
+  - 🟣 **Placa sustraída** (oficial): el vehículo original no tiene encargo, pero sus placas sí. Se muestran marca, modelo y color para comparar en terreno.
+  - 🟠 **Reporte vecinal** sin verificar. Deja de alertar a los 30 días de su fecha de reporte.
+  - Posible coincidencia (caracteres que se confunden: 0/O/D, 8/B, 5/S, 2/Z, 6/G, 1/I/L), prueba y sin reporte.
+- Lo oficial manda: un registro verificado sin encargo ni placas sustraídas deja de alertar, y uno marcado Recuperado o Descartado también.
+- Cada resultado muestra una **línea de confianza** según la fuente (oficial o vecinal) y su antigüedad.
+- **Informar un cambio** abre un Formulario de Google con la patente precargada; las respuestas llegan a la hoja *Avisos* y solo los moderadores modifican la base.
 
 ## Primer uso
 1. Abrir la app y tocar ⚙.
@@ -23,6 +30,7 @@ Una coincidencia **no** confirma que un auto sea robado. La app nunca indica int
 | Archivo | Qué es |
 |---|---|
 | `index.html`, `app.js` | Interfaz y lógica |
+| `apps-script/Codigo.gs` | Script de Google Apps Script que va dentro de la planilla |
 | `sw.js` | Service worker (uso sin señal). Cambiar `VERSION` al publicar cambios |
 | `models/` | Detector de placas (YOLOv9-t 384) y OCR de placas (CCT-XS v2 global) |
 | `vendor/ort/` | ONNX Runtime Web 1.20.1 |

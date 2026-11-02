@@ -13,7 +13,7 @@
   :root{
     --bg:#0B1320; --panel:#13213A; --panel2:#1A2B4A; --line:#26395E;
     --text:#E8EEF7; --muted:#93A4BF; --accent:#F2B705;
-    --red:#E5484D; --amber:#F5A524; --green:#30A46C; --blue:#3E8EDE;
+    --red:#E5484D; --amber:#F5A524; --purple:#A869E0; --green:#30A46C; --blue:#3E8EDE;
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--text);
@@ -55,9 +55,18 @@
   #resultado .titulo{font-weight:700;font-size:18px;margin:8px 0 4px}
   #resultado .detalle{color:var(--muted);font-size:14px}
   #resultado .acciones{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-  #resultado .acciones > *{flex:1}
-  #resultado.reporte{border-color:var(--red);background:#2A1418}
-  #resultado.posible{border-color:var(--amber);background:#2A2012}
+  #resultado .acciones > *{flex:1 1 140px;white-space:nowrap;font-size:15px}
+  #resultado.encargo{border-color:var(--red);background:#2A1418}
+  #resultado.placa{border-color:var(--purple);background:#221634}
+  #resultado.vecinal{border-color:var(--amber);background:#2A2012}
+  #resultado.posible{border-color:var(--amber);border-style:dashed;background:#2A2012}
+  #resultado .vehiculo{margin-top:10px;font-size:15px}
+  .confianza{margin-top:12px}
+  .confianza .barra{height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+  .confianza .barra i{display:block;height:100%;border-radius:3px;box-shadow:0 0 8px currentColor}
+  .confianza span{display:block;font-size:12px;color:var(--muted);margin-top:5px}
+  a.btn.ghost{background:transparent;border:1px solid var(--line);font-weight:500}
+  a.btn[hidden]{display:none}
   #resultado.prueba{border-color:var(--blue);background:#12223A}
   #resultado.sin{border-color:var(--green)}
   a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none;color:inherit;
@@ -72,7 +81,9 @@
   #historial .p{font:700 18px ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:2px;min-width:92px}
   #historial .m{font-size:12px;color:var(--muted);flex:1;min-width:120px}
   #historial .tag{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--panel2)}
-  #historial .tag.reporte{background:var(--red);color:#fff}
+  #historial .tag.reporte,#historial .tag.encargo{background:var(--red);color:#fff}
+  #historial .tag.placa{background:var(--purple);color:#fff}
+  #historial .tag.vecinal{background:var(--amber);color:#1B1300}
   #historial .tag.posible{background:var(--amber);color:#1B1300}
   #historial .tag.prueba{background:var(--blue);color:#fff}
   #historial .eval{display:flex;gap:6px}
@@ -142,6 +153,7 @@
   <p class="aviso">Una coincidencia <b>no</b> confirma que un auto sea robado: solo indica que su patente
     aparece en un reporte vecinal. No intervengas ni confrontes a nadie. Verifica en fuente oficial y, si corresponde,
     llama al <b>133</b>. Esta app no guarda fotos ni ubicación.</p>
+  <p class="aviso"><a id="lnkNuevo" class="btn ghost" hidden target="_blank" rel="noopener">Informar un reporte nuevo o un auto recuperado</a></p>
 </main>
 
 <dialog id="dlgConfig">
