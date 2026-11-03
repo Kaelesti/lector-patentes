@@ -1,8 +1,8 @@
 // Service worker: guarda la app y los modelos para que funcione sin señal.
 // Cambia VERSION cada vez que se publiquen cambios para forzar la actualización.
-const VERSION = 'lp-v2';
+const VERSION = 'lp-v3';
 const ARCHIVOS = [
-  './', 'index.html', 'app.js', 'manifest.webmanifest',
+  './', 'index.html', 'app.js', 'moderacion.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png',
   'vendor/ort/ort.wasm.min.js', 'vendor/ort/ort-wasm-simd-threaded.mjs', 'vendor/ort/ort-wasm-simd-threaded.wasm',
   'models/detector-placas.onnx', 'models/ocr-placas.onnx',

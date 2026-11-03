@@ -18,6 +18,12 @@ PWA que lee placas patentes con la cámara del celular y las coteja con una base
 - Cada resultado muestra una **línea de confianza** según la fuente (oficial o vecinal) y su antigüedad.
 - **Informar un cambio** abre un Formulario de Google con la patente precargada; las respuestas llegan a la hoja *Avisos* y solo los moderadores modifican la base.
 
+## Moderación
+- Los moderadores ingresan su **clave de moderador** en ⚙ (cada uno tiene la suya, en la hoja *Moderadores* de la planilla; `Activo = No` le quita el acceso).
+- Con esa clave aparece el botón 🛡 y, en cada resultado, **Registrar verificación**: se abre Autoseguro con la patente copiada y se registra el aviso que mostró (🔵 sin encargo · 🟡 placas sustraídas · 🔴 encargo vigente), con N° EUN y datos del vehículo.
+- El panel 🛡 tiene tres pestañas: **Pendientes** (reportes sin verificar o con verificación de más de 30 días), **Avisos** (lo enviado por vecinos con *Informar cambio*) y **Nuevo reporte**.
+- Todas las escrituras pasan por el script, que valida la clave y deja cada cambio en la hoja *Historial* (quién, cuándo, valor anterior → nuevo). Los moderadores no necesitan acceso a la planilla.
+
 ## Primer uso
 1. Abrir la app y tocar ⚙.
 2. Pegar la URL del script (termina en `/exec`) y la clave. Quedan guardadas solo en ese teléfono; **no se suben a este repositorio**.

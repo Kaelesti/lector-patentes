@@ -1,19 +1,23 @@
 /**
- * Lector de patentes — puente entre la planilla y la app (versión 2)
+ * Lector de patentes — puente entre la planilla y la app (versión 3: moderación)
  *
- * Qué entrega a la app: solo patente, nivel de alerta, estado, fechas,
- * placas sustraídas y marca/modelo/color (para comparar en terreno).
- * No entrega observaciones, fuentes, EUN ni quién ingresó o verificó.
+ * Consulta pública (doGet): entrega solo patente, nivel de alerta, estado, fechas,
+ * placas sustraídas y marca/modelo/color. No entrega observaciones, fuentes, EUN
+ * ni quién ingresó o verificó.
+ * Moderación (doPost): solo con una clave de moderador de la hoja "Moderadores".
+ * Cada cambio queda registrado en la hoja "Historial".
  *
- * INSTALACIÓN (una sola vez):
- *   1. Escribe tu clave abajo, en CLAVE.
- *   2. Guarda (💾). Arriba, elige la función "prepararPlanilla" y toca ▶ Ejecutar.
- *   3. Luego elige "crearFormulario" y toca ▶ Ejecutar.
- *   4. Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar.
+ * INSTALACIÓN / ACTUALIZACIÓN:
+ *   1. Escribe tu clave de consulta abajo, en CLAVE (después de ejecutar
+ *      "prepararModeracion" queda guardada y en futuras actualizaciones ya no hace falta).
+ *   2. Guarda (💾). Ejecuta UNA vez, en este orden, las funciones que aún no hayas ejecutado:
+ *      prepararPlanilla → crearFormulario → prepararModeracion
+ *   3. Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar.
  */
 
-// ⚠ ESCRIBE AQUÍ TU CLAVE (la misma que ya usas en la app)
+// Clave de CONSULTA (la que usan todos los vecinos en la app)
 const CLAVE = 'cambia-esta-clave';
+const CLAVE_EJEMPLO = 'cambia-esta-clave';
 
 // Días que un reporte vecinal SIN verificación oficial sigue alertando.
 const DIAS_VIGENCIA_VECINAL = 30;
@@ -22,7 +26,7 @@ const DIAS_VIGENCIA_VECINAL = 30;
 // Entrega de datos a la app
 // ---------------------------------------------------------------------------
 function doGet(e) {
-  if (!e || !e.parameter || e.parameter.k !== CLAVE) return json({ error: 'no autorizado' });
+  if (!e || !e.parameter || !claveConsulta() || e.parameter.k !== claveConsulta()) return json({ error: 'no autorizado' });
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hoy = new Date();
@@ -67,7 +71,7 @@ function doGet(e) {
 
   const props = PropertiesService.getScriptProperties();
   return json({
-    version: 2,
+    version: 3,
     actualizado: new Date().toISOString(),
     vigenciaVecinal: DIAS_VIGENCIA_VECINAL,
     formulario: props.getProperty('FORM_URL') || '',
@@ -196,6 +200,347 @@ function crearFormulario() {
   props.setProperty('FORM_URL', pre);
   Logger.log('Formulario creado. Enlace para responder: ' + form.getPublishedUrl());
   Logger.log('Para editarlo: ' + form.getEditUrl());
+}
+
+// ---------------------------------------------------------------------------
+// MODERACIÓN — la app envía POST con {accion, mod (clave del moderador), ...}
+// ---------------------------------------------------------------------------
+function doPost(e) {
+  let req;
+  try { req = JSON.parse(e.postData.contents); } catch (err) { return json({ error: 'Solicitud inválida' }); }
+  const mod = moderador(req && req.mod);
+  if (!mod) return json({ error: 'Clave de moderador no válida o inactiva' });
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+    switch (req.accion) {
+      case 'login': return json({ ok: true, nombre: mod });
+      case 'verificar': return json(accionVerificar(req, mod));
+      case 'nuevo': return json(accionNuevo(req, mod));
+      case 'pendientes': return json(accionPendientes());
+      case 'avisos': return json(accionAvisos());
+      case 'atender': return json(accionAtender(req, mod));
+      default: return json({ error: 'Acción desconocida' });
+    }
+  } catch (err) {
+    return json({ error: String((err && err.message) || err) });
+  } finally {
+    try { lock.releaseLock(); } catch (e2) {}
+  }
+}
+
+/** Devuelve el nombre del moderador si la clave es válida y está activa. */
+function moderador(clave) {
+  clave = texto(clave);
+  if (!clave || clave === claveConsulta()) return null;
+  const filas = leerTabla(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Moderadores'));
+  for (const f of filas) {
+    if (texto(f['Clave']) === clave && texto(f['Activo']) === 'Sí') return texto(f['Nombre']) || 'Moderador';
+  }
+  return null;
+}
+
+/** Registra el resultado de una consulta en autoseguro.gob.cl */
+function accionVerificar(req, mod) {
+  const p = validarPatente(req.patente);
+  const r = req.resultado;
+  if (['sin', 'placas', 'encargo'].indexOf(r) < 0) throw new Error('Resultado no válido');
+  let placas = 'Ninguna';
+  if (r === 'placas') {
+    if (['Delantera', 'Trasera', 'Ambas'].indexOf(req.placas) < 0) throw new Error('Indica qué placa figura sustraída');
+    placas = req.placas;
+  } else if (r === 'encargo' && ['Delantera', 'Trasera', 'Ambas'].indexOf(req.placas) >= 0) {
+    placas = req.placas;
+  }
+
+  const t = tabla('Reportes');
+  let i = filaDePatente(t, p);
+  let cambios = {
+    'Encargo vehículo': r === 'encargo' ? 'Sí' : 'No',
+    'Placas sustraídas': placas,
+    'Fecha verificación': new Date(),
+    'Verificado por': mod,
+    'Estado': r === 'sin' ? (req.estado === 'Descartado' ? 'Descartado' : 'Recuperado') : 'Vigente',
+  };
+  if (texto(req.eun)) cambios['N° EUN'] = texto(req.eun);
+  datosVehiculo(req, cambios);
+
+  let accion = 'Verificación';
+  if (i < 0) {
+    if (r === 'sin') {
+      registrarHistorial(mod, 'Verificación', p, 'Sin encargo. La patente no estaba en la base: no se agregó.');
+      if (req.aviso) marcarAtendido(req.aviso, mod, 'Verificado: sin encargo');
+      return { ok: true, mensaje: p + ' no tiene encargo. No estaba en la base, así que no se agregó.' };
+    }
+    i = filaNueva(t);
+    cambios = Object.assign(filaInicial(t, p, mod, 'Verificación oficial'), cambios); // el resultado manda sobre los valores iniciales
+    accion = 'Verificación (registro nuevo)';
+  }
+  if (texto(req.nota)) cambios['Observaciones'] = agregarNota(valor(t, i, 'Observaciones'), mod, req.nota);
+
+  const detalle = escribir(t, i, cambios);
+  registrarHistorial(mod, accion, p, detalle);
+  if (req.aviso) marcarAtendido(req.aviso, mod, 'Verificado');
+  const txt = { sin: 'sin encargo (' + cambios['Estado'] + ')', placas: 'placas sustraídas (' + placas + ')', encargo: 'encargo vigente' }[r];
+  return { ok: true, mensaje: p + ' registrado: ' + txt + '.' };
+}
+
+/** Agrega un reporte vecinal nuevo (o reactiva uno recuperado/descartado). */
+function accionNuevo(req, mod) {
+  const p = validarPatente(req.patente);
+  const t = tabla('Reportes');
+  let i = filaDePatente(t, p);
+  let cambios = {};
+  datosVehiculo(req, cambios);
+  if (texto(req.sector) && t.col['Sector / Comuna'] !== undefined) cambios['Sector / Comuna'] = texto(req.sector);
+  const fr = fechaDesdeTexto(req.fechaRobo); if (fr) cambios['Fecha robo'] = fr;
+  if (texto(req.enlace)) cambios['Enlace fuente'] = texto(req.enlace);
+  if (texto(req.fuente)) cambios['Fuente'] = texto(req.fuente);
+
+  let accion;
+  if (i >= 0) {
+    const estado = texto(valor(t, i, 'Estado'));
+    if (estado !== 'Recuperado' && estado !== 'Descartado') {
+      return { error: p + ' ya está en la base (estado: ' + (estado || 'sin estado') + '). Usa "Registrar verificación" para actualizarla.' };
+    }
+    Object.assign(cambios, {
+      'Estado': 'Por revisar', 'Fecha reporte': new Date(),
+      'Encargo vehículo': 'Sin verificar', 'Placas sustraídas': 'Sin verificar',
+    });
+    accion = 'Reporte reactivado';
+  } else {
+    i = filaNueva(t);
+    cambios = Object.assign(filaInicial(t, p, mod, texto(req.fuente) || 'Redes sociales'), cambios);
+    accion = 'Reporte nuevo';
+  }
+  if (texto(req.nota)) cambios['Observaciones'] = agregarNota(valor(t, i, 'Observaciones'), mod, req.nota);
+  const detalle = escribir(t, i, cambios);
+  registrarHistorial(mod, accion, p, detalle);
+  if (req.aviso) marcarAtendido(req.aviso, mod, accion);
+  return { ok: true, mensaje: p + ': ' + accion.toLowerCase() + ' (por revisar).' };
+}
+
+/** Reportes que necesitan verificación oficial (o que la tienen hace más de 30 días). */
+function accionPendientes() {
+  const hoy = new Date(), sin = [], antiguas = [];
+  for (const r of leerTabla(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Reportes'))) {
+    const p = normalizar(r['Patente']);
+    if (!p) continue;
+    const estado = texto(r['Estado']);
+    if (estado === 'Recuperado' || estado === 'Descartado') continue;
+    const enc = texto(r['Encargo vehículo']), pl = texto(r['Placas sustraídas']);
+    const item = { p: p, ma: texto(r['Marca']), mo: texto(r['Modelo']), co: texto(r['Color']),
+      f: fecha(r['Fecha reporte'] || r['Fecha robo']), fv: fecha(r['Fecha verificación']), e: estado };
+    if (!enc || enc === 'Sin verificar' || !pl || pl === 'Sin verificar') { item.motivo = 'Sin verificar'; sin.push(item); }
+    else {
+      const fv = r['Fecha verificación'];
+      if (!(fv instanceof Date) || (hoy - fv) / 86400000 > 30) { item.motivo = 'Verificación antigua'; antiguas.push(item); }
+    }
+  }
+  // Primero los que tienen fecha de reporte más reciente
+  sin.sort(function (a, b) { return (b.f || '').localeCompare(a.f || ''); });
+  return { ok: true, pendientes: sin.concat(antiguas).slice(0, 300), total: sin.length + antiguas.length };
+}
+
+/** Avisos enviados por vecinos (formulario) que aún no se atienden. */
+function accionAvisos() {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Avisos');
+  if (!sh || sh.getLastRow() < 2) return { ok: true, avisos: [] };
+  asegurarColumna(sh, 'Atendido');
+  const v = sh.getDataRange().getValues(), enc = v[0].map(function (h) { return String(h).trim(); });
+  const c = function (prefijo) { for (let k = 0; k < enc.length; k++) if (enc[k].indexOf(prefijo) === 0) return k; return -1; };
+  const cP = c('Patente'), cT = c('¿Qué'), cD = c('Detalle'), cE = c('Enlace'), cC = c('¿Cómo'), cA = enc.indexOf('Atendido');
+  const avisos = [];
+  for (let i = v.length - 1; i >= 1; i--) {
+    const f = v[i];
+    if (!String(f[0]).trim() || (cA >= 0 && texto(f[cA]))) continue;
+    avisos.push({
+      fila: i + 1,
+      fecha: f[0] instanceof Date ? Utilities.formatDate(f[0], 'America/Santiago', 'dd-MM-yyyy HH:mm') : texto(f[0]),
+      p: cP >= 0 ? normalizar(f[cP]) : '', tipo: cT >= 0 ? texto(f[cT]) : '', detalle: cD >= 0 ? texto(f[cD]) : '',
+      enlace: cE >= 0 ? texto(f[cE]) : '', contacto: cC >= 0 ? texto(f[cC]) : '',
+    });
+    if (avisos.length >= 100) break;
+  }
+  return { ok: true, avisos: avisos };
+}
+
+function accionAtender(req, mod) {
+  const fila = parseInt(req.fila, 10);
+  if (!(fila >= 2)) throw new Error('Aviso no válido');
+  marcarAtendido(fila, mod, texto(req.nota) || 'Atendido');
+  return { ok: true, mensaje: 'Aviso marcado como atendido.' };
+}
+
+function marcarAtendido(fila, mod, nota) {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Avisos');
+  if (!sh) return;
+  const col = asegurarColumna(sh, 'Atendido');
+  sh.getRange(fila, col).setValue(seguro('Sí · ' + mod + ' · ' + hoyTexto() + (nota ? ' · ' + nota : '')));
+  registrarHistorial(mod, 'Aviso atendido', '', 'Fila ' + fila + (nota ? ' · ' + nota : ''));
+}
+
+// ---------------------------------------------------------------------------
+// Ejecutar UNA vez: hojas Moderadores e Historial, y guarda la clave de consulta
+// ---------------------------------------------------------------------------
+function prepararModeracion() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  if (CLAVE !== CLAVE_EJEMPLO) props.setProperty('CLAVE', CLAVE);
+  if (!claveConsulta()) throw new Error('Primero escribe tu clave de consulta en CLAVE (arriba) y guarda.');
+
+  let m = ss.getSheetByName('Moderadores');
+  if (!m) {
+    m = ss.insertSheet('Moderadores');
+    m.getRange(1, 1, 1, 3).setValues([['Nombre', 'Clave', 'Activo']]).setFontWeight('bold');
+    const clave = nuevaClave();
+    m.getRange(2, 1, 1, 3).setValues([['José', clave, 'Sí']]);
+    m.getRange(2, 3, 199, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Sí', 'No'], true).build());
+    m.setColumnWidths(1, 3, 160);
+    m.getRange(4, 1).setValue('Para agregar un moderador: escribe su nombre, ejecuta la función "nuevaClaveModerador" ' +
+      'y copia la clave que aparece en el registro. Para quitarle el acceso: Activo = No.').setFontStyle('italic');
+    Logger.log('Tu clave de MODERADOR es: ' + clave + '  (también está en la hoja Moderadores)');
+  } else {
+    Logger.log('La hoja Moderadores ya existía. Tus claves están ahí.');
+  }
+  if (!ss.getSheetByName('Historial')) {
+    const h = ss.insertSheet('Historial');
+    h.getRange(1, 1, 1, 5).setValues([['Fecha y hora', 'Moderador', 'Acción', 'Patente', 'Detalle']]).setFontWeight('bold');
+    h.setColumnWidth(1, 140); h.setColumnWidth(5, 500); h.setFrozenRows(1);
+  }
+  const av = ss.getSheetByName('Avisos');
+  if (av) asegurarColumna(av, 'Atendido');
+  Logger.log('Moderación lista.');
+}
+
+/** Genera una clave nueva para entregar a un moderador (cópiala en la hoja Moderadores). */
+function nuevaClaveModerador() {
+  Logger.log('Clave nueva: ' + nuevaClave());
+}
+
+// ---------------------------------------------------------------------------
+// Utilidades de escritura
+// ---------------------------------------------------------------------------
+function claveConsulta() {
+  if (CLAVE && CLAVE !== CLAVE_EJEMPLO) return CLAVE;
+  return PropertiesService.getScriptProperties().getProperty('CLAVE') || '';
+}
+
+function nuevaClave() {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+}
+
+function tabla(nombre) {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nombre);
+  if (!sh) throw new Error('No existe la hoja ' + nombre);
+  const v = sh.getDataRange().getValues();
+  const enc = v[0].map(function (h) { return String(h).trim(); });
+  const col = {};
+  enc.forEach(function (h, k) { if (h) col[h] = k; });
+  ['Patente', 'Estado', 'Encargo vehículo', 'Placas sustraídas'].forEach(function (h) {
+    if (col[h] === undefined) throw new Error('Falta la columna "' + h + '". ¿Ejecutaste prepararPlanilla?');
+  });
+  return { sh: sh, v: v, col: col };
+}
+
+function filaDePatente(t, p) {
+  for (let i = 1; i < t.v.length; i++) if (normalizar(t.v[i][t.col['Patente']]) === p) return i;
+  return -1;
+}
+
+/** Índice (base 0) de la fila siguiente a la última con patente. */
+function filaNueva(t) {
+  let ultima = 0;
+  for (let i = 1; i < t.v.length; i++) if (normalizar(t.v[i][t.col['Patente']])) ultima = i;
+  const i = ultima + 1;
+  if (i + 1 > t.sh.getMaxRows()) t.sh.insertRowsAfter(t.sh.getMaxRows(), 50);
+  while (t.v.length <= i) t.v.push([]);
+  return i;
+}
+
+function filaInicial(t, p, mod, fuente) {
+  let max = 0;
+  for (let i = 1; i < t.v.length; i++) {
+    const m = /^R(\d+)$/.exec(texto(t.v[i][t.col['ID']]));
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return {
+    'ID': 'R' + ('00' + (max + 1)).slice(-3), 'Patente': p, 'Fecha reporte': new Date(), 'Fuente': fuente,
+    'Estado': 'Por revisar', 'Encargo vehículo': 'Sin verificar', 'Placas sustraídas': 'Sin verificar', 'Ingresado por': mod,
+  };
+}
+
+function valor(t, i, h) {
+  const c = t.col[h];
+  return c === undefined || !t.v[i] ? '' : t.v[i][c];
+}
+
+/** Escribe los cambios en la fila i y devuelve un texto "Campo: antes → después; ..." */
+function escribir(t, i, cambios) {
+  const partes = [];
+  Object.keys(cambios).forEach(function (h) {
+    const c = t.col[h];
+    if (c === undefined) return; // columna inexistente en esta planilla: se ignora
+    const antes = valor(t, i, h), despues = cambios[h];
+    const a = fecha(antes), d = fecha(despues);
+    if (a === d) return;
+    t.sh.getRange(i + 1, c + 1).setValue(despues instanceof Date ? despues : seguro(despues));
+    if (!t.v[i]) t.v[i] = [];
+    t.v[i][c] = despues;
+    if (h !== 'Observaciones') partes.push(h + ': ' + (a || '—') + ' → ' + d);
+  });
+  return partes.join('; ');
+}
+
+function datosVehiculo(req, cambios) {
+  if (texto(req.ma)) cambios['Marca'] = texto(req.ma);
+  if (texto(req.mo)) cambios['Modelo'] = texto(req.mo);
+  if (texto(req.co)) cambios['Color'] = texto(req.co);
+}
+
+function agregarNota(anterior, mod, nota) {
+  const n = hoyTexto() + ' ' + mod + ': ' + texto(nota);
+  return texto(anterior) ? texto(anterior) + ' | ' + n : n;
+}
+
+function registrarHistorial(mod, accion, p, detalle) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let h = ss.getSheetByName('Historial');
+  if (!h) {
+    h = ss.insertSheet('Historial');
+    h.getRange(1, 1, 1, 5).setValues([['Fecha y hora', 'Moderador', 'Acción', 'Patente', 'Detalle']]);
+  }
+  h.appendRow([new Date(), mod, accion, p, seguro(detalle)]);
+}
+
+function asegurarColumna(sh, nombre) {
+  const enc = encabezados(sh);
+  const k = enc.indexOf(nombre);
+  if (k >= 0) return k + 1;
+  const c = sh.getLastColumn() + 1;
+  sh.getRange(1, c).setValue(nombre).setFontWeight('bold');
+  return c;
+}
+
+function validarPatente(v) {
+  const p = normalizar(v);
+  if (!/^[A-Z0-9]{5,7}$/.test(p)) throw new Error('Patente no válida: ' + texto(v));
+  return p;
+}
+
+function fechaDesdeTexto(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto(v));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], 12) : null;
+}
+
+function hoyTexto() { return Utilities.formatDate(new Date(), 'America/Santiago', 'dd-MM-yyyy'); }
+
+/** Evita que un texto escrito en la app se interprete como fórmula. */
+function seguro(v) {
+  const s = texto(v);
+  return /^[=+\-@]/.test(s) ? "'" + s : v;
 }
 
 // ---------------------------------------------------------------------------

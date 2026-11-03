@@ -107,12 +107,56 @@
     padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
   #toast.show{opacity:1}
   .aviso{font-size:12px;color:var(--muted);margin-top:24px;line-height:1.5}
+  /* ---- Moderación ---- */
+  button[hidden]{display:none}
+  .btn-mod{flex:1 1 100%;background:#22324F;border:1px dashed var(--accent);font-weight:600}
+  .placa-mini{font:700 18px ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:2px;background:#fff;color:#000;
+    padding:2px 8px;border-radius:6px;margin-left:6px;vertical-align:middle}
+  dialog .paso{font-weight:600;color:var(--text);margin:14px 0 6px;font-size:14px}
+  .opciones3{display:grid;gap:8px}
+  .opciones3 .op{text-align:left;display:flex;flex-direction:column;gap:2px;border:2px solid transparent}
+  .opciones3 .op small{color:var(--muted);font-size:12px}
+  .opciones3 .op.on[data-r=sin]{border-color:var(--blue)}
+  .opciones3 .op.on[data-r=placas]{border-color:var(--accent)}
+  .opciones3 .op.on[data-r=encargo]{border-color:var(--red)}
+  .sub{margin-top:8px}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{flex:1;min-height:42px;padding:6px 8px;font-size:14px}
+  .seg button.on{background:var(--accent);color:#1B1300;font-weight:700}
+  dialog details{margin-top:12px}
+  dialog summary{color:var(--muted);font-size:14px;cursor:pointer;padding:6px 0}
+  dialog textarea{width:100%;font:inherit;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px}
+  .tres{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px}
+  .tres input{min-width:0}
+  .info{min-height:1em}
+  .info.err{color:#FF9DA0}
+  input.mayus{text-transform:uppercase;letter-spacing:2px;font-size:18px}
+  dialog.pantalla{width:100vw;max-width:720px;height:100dvh;max-height:100dvh;margin:0 auto;border-radius:0;border:0;padding:12px 16px 24px}
+  .mod-cab{display:flex;align-items:center;gap:8px}
+  .mod-cab h3{flex:1;margin:0}
+  .mod-cab small{font-weight:400;color:var(--muted);font-size:14px}
+  .tabs{display:flex;gap:6px;margin:12px 0}
+  .tabs button{flex:1;min-height:42px;font-size:14px;padding:6px}
+  .tabs button.on{background:var(--accent);color:#1B1300;font-weight:700}
+  .tabs b{font-weight:700}
+  .ayuda{font-size:13px;color:var(--muted);margin:4px 0 10px}
+  .lista{list-style:none;margin:0;padding:0}
+  .lista li{background:var(--panel2);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+  .lista .cab{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .lista .p{font:700 18px ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:2px}
+  .lista .m{font-size:13px;color:var(--muted)}
+  .lista .d{font-size:14px;margin-top:6px;white-space:pre-wrap}
+  .lista .acc{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .lista .acc > *{flex:1 1 100px;min-height:40px;font-size:14px;padding:6px 10px}
+  .lista a{color:#9CC3FF}
+  .lista .acc button:not(.primary){background:transparent;border:1px solid #3A5584}
 </style>
 </head>
 <body>
 <header>
   <h1>Lector de patentes</h1>
   <span id="estadoBase" class="pill warn">Sin base</span>
+  <button id="btnMod" class="icon ghost" hidden aria-label="Moderación">🛡</button>
   <button id="btnConfig" class="icon ghost" aria-label="Configuración">⚙</button>
 </header>
 
@@ -163,6 +207,8 @@
     <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" required>
     <label for="cfgClave">Clave</label>
     <input id="cfgClave" type="password" required>
+    <label for="cfgMod">Clave de moderador (solo moderadores; déjala vacía si no lo eres)</label>
+    <input id="cfgMod" type="password" autocomplete="off">
     <p id="cfgInfo"></p>
     <div class="fila">
       <button type="button" id="cfgCancelar" class="ghost">Cerrar</button>
@@ -171,9 +217,88 @@
   </form>
 </dialog>
 
+<dialog id="dlgVerif">
+  <form id="frmVerif">
+    <h3>Registrar verificación <span id="vPat" class="placa-mini"></span></h3>
+    <p class="paso">1. Consulta la patente en el sitio oficial</p>
+    <a id="vAbrir" class="btn" href="https://www.autoseguro.gob.cl/" target="_blank" rel="noopener">🔎 Abrir Autoseguro (la patente queda copiada)</a>
+    <p class="paso">2. ¿Qué aviso mostró?</p>
+    <div class="opciones3">
+      <button type="button" class="op" data-r="sin">🔵 Sin encargo<small>Aviso azul «Información»</small></button>
+      <button type="button" class="op" data-r="placas">🟡 Placas sustraídas<small>Aviso amarillo con tabla</small></button>
+      <button type="button" class="op" data-r="encargo">🔴 Encargo vigente<small>El vehículo tiene encargo</small></button>
+    </div>
+    <div id="vPlacas" class="sub" hidden>
+      <label>¿Qué placa figura sustraída?</label>
+      <div class="seg" data-campo="placas">
+        <button type="button" data-v="Delantera">Delantera</button><button type="button" data-v="Trasera">Trasera</button><button type="button" data-v="Ambas">Ambas</button>
+      </div>
+    </div>
+    <div id="vEstado" class="sub" hidden>
+      <label>¿Cómo queda el reporte?</label>
+      <div class="seg" data-campo="estado">
+        <button type="button" data-v="Recuperado" class="on">Recuperado</button><button type="button" data-v="Descartado">Descartado (era un error)</button>
+      </div>
+    </div>
+    <label for="vEun">N° EUN (si aparece)</label>
+    <input id="vEun" inputmode="numeric" autocomplete="off">
+    <details>
+      <summary>Marca, modelo, color y nota (opcional)</summary>
+      <div class="tres"><input id="vMa" placeholder="Marca"><input id="vMo" placeholder="Modelo"><input id="vCo" placeholder="Color"></div>
+      <textarea id="vNota" rows="2" placeholder="Nota para los moderadores"></textarea>
+    </details>
+    <p id="vInfo" class="info"></p>
+    <div class="fila">
+      <button type="button" id="vCancelar" class="ghost">Cancelar</button>
+      <button type="submit" id="vGuardar" class="primary" disabled>Guardar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgMod" class="pantalla">
+  <div class="mod-cab">
+    <h3>🛡 Moderación <small id="modNombre"></small></h3>
+    <button id="modCerrar" class="icon ghost" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="tabs">
+    <button data-tab="Pend" class="on">Pendientes <b id="nPend"></b></button>
+    <button data-tab="Avisos">Avisos <b id="nAv"></b></button>
+    <button data-tab="Nuevo">Nuevo reporte</button>
+  </div>
+  <section id="tabPend">
+    <p class="ayuda">Reportes que aún no se verifican en fuente oficial, o cuya verificación tiene más de 30 días.
+      Toca <b>Verificar</b>, consulta en Autoseguro y registra lo que diga.</p>
+    <ul id="lstPend" class="lista"></ul>
+  </section>
+  <section id="tabAvisos" hidden>
+    <p class="ayuda">Lo que los vecinos enviaron con «Informar cambio». Verifica antes de modificar la base.</p>
+    <ul id="lstAv" class="lista"></ul>
+  </section>
+  <section id="tabNuevo" hidden>
+    <form id="frmNuevo" autocomplete="off">
+      <label for="nPat">Patente *</label>
+      <input id="nPat" required maxlength="8" class="mayus">
+      <div class="tres"><input id="nMa" placeholder="Marca"><input id="nMo" placeholder="Modelo"><input id="nCo" placeholder="Color"></div>
+      <label for="nFecha">Fecha del robo</label>
+      <input id="nFecha" type="date">
+      <label for="nSector">Sector</label>
+      <input id="nSector" placeholder="Ej: Brisa del Sol, calle…">
+      <label for="nEnlace">Enlace a la publicación</label>
+      <input id="nEnlace" type="url" placeholder="https://…">
+      <label for="nNota">Nota</label>
+      <textarea id="nNota" rows="2"></textarea>
+      <p class="ayuda">Queda como <b>reporte vecinal por revisar</b> (alerta ámbar por 30 días) hasta que alguien lo verifique.
+        No escribas nombres, teléfonos ni direcciones de los dueños.</p>
+      <p id="nInfo" class="info"></p>
+      <button type="submit" class="primary" style="width:100%">Guardar reporte</button>
+    </form>
+  </section>
+</dialog>
+
 <div id="toast"></div>
 
 <script src="vendor/ort/ort.wasm.min.js"></script>
 <script src="app.js"></script>
+<script src="moderacion.js"></script>
 </body>
 </html>

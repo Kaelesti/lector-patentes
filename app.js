@@ -418,6 +418,7 @@ function mostrarResultado(p, b) {
     detalle = base ? 'Esto no descarta un encargo oficial. Si tienes dudas, verifica en fuente oficial.' : 'Aún no hay base cargada: configúrala en ⚙.';
     acciones = verif + informar;
   }
+  if (b.tipo !== 'prueba' && typeof botonModeracion === 'function') acciones += botonModeracion(p);
   el.innerHTML = `<div class="placa">${esc(p)}</div><div class="titulo">${titulo}</div><div class="detalle">${detalle}</div>${extra}` +
     (acciones ? `<div class="acciones">${acciones}</div>` : '');
   if (b.tipo !== 'sin') alertaSonora(b.tipo);
@@ -540,7 +541,7 @@ $('#btnLinterna').addEventListener('click', async () => {
 const dlg = $('#dlgConfig');
 function abrirConfig() {
   const cfg = leerLS(LS.config, {});
-  $('#cfgUrl').value = cfg.url || ''; $('#cfgClave').value = cfg.clave || '';
+  $('#cfgUrl').value = cfg.url || ''; $('#cfgClave').value = cfg.clave || ''; $('#cfgMod').value = cfg.mod || '';
   $('#cfgInfo').textContent = base ? `Base actual: ${base.patentes.length} registros, descargada ${hace(base.ts)}.`
     : 'La URL y la clave quedan guardadas solo en este teléfono.';
   dlg.showModal();
@@ -550,10 +551,14 @@ $('#estadoBase').addEventListener('click', abrirConfig);
 $('#cfgCancelar').addEventListener('click', () => dlg.close());
 $('#frmConfig').addEventListener('submit', async (ev) => {
   ev.preventDefault();
-  guardarLS(LS.config, { url: $('#cfgUrl').value.trim(), clave: $('#cfgClave').value.trim() });
+  const prev = leerLS(LS.config, {}), mod = $('#cfgMod').value.trim();
+  guardarLS(LS.config, { url: $('#cfgUrl').value.trim(), clave: $('#cfgClave').value.trim(),
+    mod, modNombre: mod && mod === prev.mod ? prev.modNombre : '' });
   $('#cfgInfo').textContent = 'Descargando…';
-  if (await actualizarBase()) dlg.close();
-  else $('#cfgInfo').textContent = 'No se pudo descargar. Revisa la URL y la clave.';
+  if (await actualizarBase()) {
+    if (typeof refrescarModerador === 'function') await refrescarModerador();
+    dlg.close();
+  } else $('#cfgInfo').textContent = 'No se pudo descargar. Revisa la URL y la clave.';
 });
 
 // ---------- Inicio ----------
