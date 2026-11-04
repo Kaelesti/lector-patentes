@@ -6,7 +6,7 @@ PWA que lee placas patentes con la cámara del celular y las coteja con una base
 
 ## Cómo funciona
 - La detección de la placa y la lectura de caracteres ocurren **dentro del teléfono** (ONNX Runtime Web). Las imágenes no se envían a ningún servidor.
-- La base se descarga desde un script de Google Apps Script asociado a la planilla, que entrega solo patente, nivel de alerta, estado, fechas, placas sustraídas y marca/modelo/color.
+- La base se descarga desde un script de Google Apps Script asociado a la planilla, que entrega solo patente, nivel de alerta, estado, fechas, placas sustraídas y marca/modelo/color, y solo a cuentas habilitadas.
 - Funciona sin señal: la app, los modelos y la última base descargada quedan guardados en el teléfono.
 - En vivo, una patente se confirma cuando se lee igual en al menos 2 cuadros.
 - Niveles de resultado:
@@ -18,15 +18,22 @@ PWA que lee placas patentes con la cámara del celular y las coteja con una base
 - Cada resultado muestra una **línea de confianza** según la fuente (oficial o vecinal) y su antigüedad.
 - **Informar un cambio** abre un Formulario de Google con la patente precargada; las respuestas llegan a la hoja *Avisos* y solo los moderadores modifican la base.
 
+## Cuentas por invitación
+- Roles: **Vecino → Enlace → Moderador → Administrador**. Sin contraseñas ni datos personales: cada cuenta tiene un ID interno y un **nick**.
+- Se entra con un **enlace de invitación** de un solo uso que vence a las 48 horas. Al aceptarlo, el teléfono queda vinculado (el servidor guarda solo una huella del token).
+- Cambio de teléfono: un moderador genera un enlace de *nuevo teléfono*; el anterior deja de funcionar.
+- Estados: Pendiente · Aceptada · Habilitada · En análisis · Rechazada / Vencida / Revocada / Anulada.
+- **No se registra qué patentes consulta cada persona.** Solo las acciones administrativas quedan en *Historial*.
+- Instalación: ejecutar `prepararCuentas` en Apps Script; entrega el código de la cuenta de Administrador.
+
 ## Moderación
-- Los moderadores ingresan su **clave de moderador** en ⚙ (cada uno tiene la suya, en la hoja *Moderadores* de la planilla; `Activo = No` le quita el acceso).
-- Con esa clave aparece el botón 🛡 y, en cada resultado, **Registrar verificación**: se abre Autoseguro con la patente copiada y se registra el aviso que mostró (🔵 sin encargo · 🟡 placas sustraídas · 🔴 encargo vigente), con N° EUN y datos del vehículo.
-- El panel 🛡 tiene tres pestañas: **Pendientes** (reportes sin verificar o con verificación de más de 30 días), **Avisos** (lo enviado por vecinos con *Informar cambio*) y **Nuevo reporte**.
-- Todas las escrituras pasan por el script, que valida la clave y deja cada cambio en la hoja *Historial* (quién, cuándo, valor anterior → nuevo). Los moderadores no necesitan acceso a la planilla.
+- Visible solo para Moderadores y Administrador. Panel 🛡: **Pendientes**, **Avisos**, **Nuevo** reporte y **Usuarios** (invitar, reenviar o anular invitaciones, nuevo teléfono, En análisis, revocar).
+- **Registrar verificación** en cada resultado: se abre Autoseguro con la patente copiada y se registra el aviso que mostró (🔵 sin encargo · 🟡 placas sustraídas · 🔴 encargo vigente).
+- Un moderador no puede gestionar cuentas de su mismo rango o superior; solo el Administrador invita moderadores.
 
 ## Primer uso
-1. Abrir la app y tocar ⚙.
-2. Pegar la URL del script (termina en `/exec`) y la clave. Quedan guardadas solo en ese teléfono; **no se suben a este repositorio**.
+1. Abrir el enlace de invitación recibido (o pegar el enlace/código en ⚙ → Mi cuenta).
+2. Elegir un nick y aceptar las condiciones de uso.
 3. Para instalarla: menú del navegador → *Agregar a pantalla de inicio*.
 
 ## Uso responsable
@@ -35,7 +42,9 @@ Una coincidencia **no** confirma que un auto sea robado. La app nunca indica int
 ## Estructura
 | Archivo | Qué es |
 |---|---|
-| `index.html`, `app.js` | Interfaz y lógica |
+| `index.html`, `app.js` | Interfaz, lectura y cotejo |
+| `cuenta.js`, `moderacion.js` | Cuentas por invitación y módulo de moderación |
+| `config.js` | URL del servidor (no es secreta) |
 | `apps-script/Codigo.gs` | Script de Google Apps Script que va dentro de la planilla |
 | `sw.js` | Service worker (uso sin señal). Cambiar `VERSION` al publicar cambios |
 | `models/` | Detector de placas (YOLOv9-t 384) y OCR de placas (CCT-XS v2 global) |

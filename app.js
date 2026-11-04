@@ -16,7 +16,7 @@ const CONSENSO_VECES = 2;      // lecturas iguales necesarias en vivo
 const CONSENSO_VENTANA_MS = 4000;
 const REPETIR_TRAS_MS = 60000; // no repetir la misma patente en el historial antes de esto
 
-const LS = { config: 'lp_config', base: 'lp_base', hist: 'lp_historial' };
+const LS = { config: 'lp_config', base: 'lp_base', hist: 'lp_historial', sesion: 'lp_sesion' };
 
 ort.env.wasm.numThreads = 1;            // GitHub Pages no permite hilos (sin aislamiento COOP/COEP)
 ort.env.wasm.wasmPaths = new URL('vendor/ort/', location.href).href; // ruta absoluta (relativa se resuelve mal)
@@ -130,20 +130,17 @@ function pintarEstadoBase() {
 }
 
 async function actualizarBase(silencioso = false) {
-  const cfg = leerLS(LS.config, null);
-  if (!cfg?.url || !cfg?.clave) { if (!silencioso) toast('Configura la URL y la clave en ⚙'); return false; }
+  if (!sesion()) { if (!silencioso) toast('Este teléfono aún no tiene una cuenta.'); return false; }
   try {
-    const u = cfg.url + (cfg.url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(cfg.clave);
-    const r = await fetch(u, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error === 'no autorizado' ? 'Clave incorrecta' : j.error);
-    if (!Array.isArray(j.patentes)) throw new Error('Respuesta inesperada del script');
+    const j = await api('base');
+    if (!Array.isArray(j.patentes)) throw new Error('Respuesta inesperada del servidor');
     base = { ts: Date.now(), patentes: j.patentes, formulario: j.formulario || '' };
     guardarLS(LS.base, base); indexar();
+    if (j.perfil) actualizarPerfil(j.perfil);
     if (!silencioso) toast(`Base actualizada: ${j.patentes.length} patentes`);
     return true;
   } catch (e) {
-    if (!silencioso) toast('No se pudo actualizar la base: ' + e.message, 4000);
+    if (!silencioso || e.sesion) toast(e.message, 4500);
     return false;
   }
 }
@@ -537,37 +534,11 @@ $('#btnLinterna').addEventListener('click', async () => {
   try { await track.applyConstraints({ advanced: [{ torch: linterna }] }); } catch { toast('Linterna no disponible'); }
 });
 
-// ---------- Configuración ----------
-const dlg = $('#dlgConfig');
-function abrirConfig() {
-  const cfg = leerLS(LS.config, {});
-  $('#cfgUrl').value = cfg.url || ''; $('#cfgClave').value = cfg.clave || ''; $('#cfgMod').value = cfg.mod || '';
-  $('#cfgInfo').textContent = base ? `Base actual: ${base.patentes.length} registros, descargada ${hace(base.ts)}.`
-    : 'La URL y la clave quedan guardadas solo en este teléfono.';
-  dlg.showModal();
-}
-$('#btnConfig').addEventListener('click', abrirConfig);
-$('#estadoBase').addEventListener('click', abrirConfig);
-$('#cfgCancelar').addEventListener('click', () => dlg.close());
-$('#frmConfig').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const prev = leerLS(LS.config, {}), mod = $('#cfgMod').value.trim();
-  guardarLS(LS.config, { url: $('#cfgUrl').value.trim(), clave: $('#cfgClave').value.trim(),
-    mod, modNombre: mod && mod === prev.mod ? prev.modNombre : '' });
-  $('#cfgInfo').textContent = 'Descargando…';
-  if (await actualizarBase()) {
-    if (typeof refrescarModerador === 'function') await refrescarModerador();
-    dlg.close();
-  } else $('#cfgInfo').textContent = 'No se pudo descargar. Revisa la URL y la clave.';
-});
-
-// ---------- Inicio ----------
+// ---------- Inicio (la sesión y la cuenta están en cuenta.js) ----------
 indexar(); pintarHistorial();
 setInterval(pintarEstadoBase, 60000);
-if (navigator.onLine) actualizarBase(true);
-if (!leerLS(LS.config, null)) setTimeout(abrirConfig, 400);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && navigator.onLine && (!base || Date.now() - base.ts > 10 * 60000)) actualizarBase(true);
+  if (!document.hidden && navigator.onLine && sesion() && (!base || Date.now() - base.ts > 10 * 60000)) actualizarBase(true);
 });
 if ('serviceWorker' in navigator) {
   const habiaControlador = !!navigator.serviceWorker.controller;

@@ -107,6 +107,18 @@
     padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
   #toast.show{opacity:1}
   .aviso{font-size:12px;color:var(--muted);margin-top:24px;line-height:1.5}
+  /* ---- Cuenta ---- */
+  .cuenta-cab{display:flex;gap:12px;align-items:center;margin:8px 0}
+  .cuenta-cab .avatar{font-size:28px;background:var(--panel2);border-radius:50%;width:48px;height:48px;display:flex;align-items:center;justify-content:center}
+  .cuenta-cab b{font-size:18px}
+  .m{color:var(--muted);font-size:13px}
+  dialog .fila input{flex:1;min-width:0}
+  button.peligro{color:#FF9DA0;border-color:#6B2A30}
+  .reglas{background:var(--bg);border-radius:12px;padding:10px 12px;font-size:14px;margin:10px 0}
+  .reglas ul{margin:6px 0 0;padding-left:18px}
+  .reglas li{margin:4px 0}
+  label.check{display:flex;gap:8px;align-items:flex-start;color:var(--text);font-size:14px;margin-top:14px}
+  label.check input{width:auto;margin-top:3px}
   /* ---- Moderación ---- */
   button[hidden]{display:none}
   .btn-mod{flex:1 1 100%;background:#22324F;border:1px dashed var(--accent);font-weight:600}
@@ -150,6 +162,24 @@
   .lista .acc > *{flex:1 1 100px;min-height:40px;font-size:14px;padding:6px 10px}
   .lista a{color:#9CC3FF}
   .lista .acc button:not(.primary){background:transparent;border:1px solid #3A5584}
+  .caja{background:var(--panel2);border-radius:12px;padding:12px;margin-bottom:12px}
+  .caja.ok{border:1px solid var(--green)}
+  .caja .acc{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .caja .acc > *{flex:1 1 90px;min-height:42px;font-size:14px}
+  .caja .acc button{background:transparent;border:1px solid #3A5584}
+  .caja select,.caja input{font:inherit;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;min-width:0}
+  .caja .fila{margin-top:8px}
+  .codigo{font:700 24px ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:2px;margin:8px 0 2px}
+  a.btn.primary{background:var(--accent);color:#1B1300}
+  #tabUsuarios h4{margin:16px 0 8px;color:var(--muted);font-size:14px}
+  .lista li{border-left:4px solid transparent}
+  .lista .estado{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--bg)}
+  .lista li.est-amarillo{border-left-color:var(--accent)} .est-amarillo .estado{background:var(--accent);color:#1B1300}
+  .lista li.est-azul{border-left-color:var(--blue)} .est-azul .estado{background:var(--blue);color:#fff}
+  .lista li.est-verde{border-left-color:var(--green)} .est-verde .estado{background:var(--green);color:#fff}
+  .lista li.est-naranjo{border-left-color:var(--amber)} .est-naranjo .estado{background:var(--amber);color:#1B1300}
+  .lista li.est-gris{opacity:.7} .est-gris .estado{background:#3A4660}
+  .lista .acc button.peligro{color:#FF9DA0;border-color:#6B2A30}
 </style>
 </head>
 <body>
@@ -200,19 +230,64 @@
   <p class="aviso"><a id="lnkNuevo" class="btn ghost" hidden target="_blank" rel="noopener">Informar un reporte nuevo o un auto recuperado</a></p>
 </main>
 
-<dialog id="dlgConfig">
-  <h3>Configuración</h3>
-  <form id="frmConfig" method="dialog">
-    <label for="cfgUrl">URL del script (termina en /exec)</label>
-    <input id="cfgUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" required>
-    <label for="cfgClave">Clave</label>
-    <input id="cfgClave" type="password" required>
-    <label for="cfgMod">Clave de moderador (solo moderadores; déjala vacía si no lo eres)</label>
-    <input id="cfgMod" type="password" autocomplete="off">
-    <p id="cfgInfo"></p>
+<dialog id="dlgCuenta">
+  <h3>Mi cuenta</h3>
+  <div class="cuenta-cab"><span class="avatar">👤</span><div><b id="cNick"></b><div id="cDetalle" class="m"></div></div></div>
+  <p id="cBase" class="m"></p>
+  <div class="fila">
+    <button type="button" id="cActualizar">↻ Actualizar base</button>
+  </div>
+  <form id="frmCodigoC" autocomplete="off">
+    <label for="cCodigo">¿Tienes una invitación? Pega el enlace o el código</label>
+    <div class="fila"><input id="cCodigo" placeholder="XXXX-XXXX-XXXX"><button type="submit" class="ghost" style="flex:0 0 auto">Usar</button></div>
+  </form>
+  <details>
+    <summary>Avanzado</summary>
+    <label for="cServidor">Servidor (URL del script, termina en /exec)</label>
+    <input id="cServidor" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+    <div class="fila"><button type="button" id="cGuardarServidor" class="ghost">Guardar servidor</button></div>
+    <div class="fila"><button type="button" id="cDesvincular" class="ghost peligro">Desvincular este teléfono</button></div>
+  </details>
+  <div class="fila"><button type="button" id="cCerrar" class="primary">Cerrar</button></div>
+</dialog>
+
+<dialog id="dlgBienvenida">
+  <h3>Lector de patentes vecinal</h3>
+  <p>Esta app funciona <b>por invitación</b>. Si alguien de confianza te invitó, abre el enlace que te envió por WhatsApp.</p>
+  <form id="frmCodigoB" autocomplete="off">
+    <label for="bCodigo">¿Ya instalaste la app? Pega aquí tu enlace o código de invitación</label>
+    <div class="fila"><input id="bCodigo" placeholder="Enlace o XXXX-XXXX-XXXX"><button type="submit" class="primary" style="flex:0 0 auto">Continuar</button></div>
+  </form>
+  <p class="m">Sin cuenta igual puedes probar la cámara, pero no habrá base de patentes para comparar.</p>
+  <div class="fila"><button type="button" class="ghost" onclick="this.closest('dialog').close()">Cerrar</button></div>
+</dialog>
+
+<dialog id="dlgInvitacion">
+  <form id="frmInvitacion" autocomplete="off">
+    <h3 id="iTitulo">Invitación</h3>
+    <div id="iCuerpo" hidden>
+      <p class="m"><span id="iRol"></span> · <span id="iVence"></span></p>
+      <div class="reglas">
+        <b>Antes de aceptar:</b>
+        <ul>
+          <li>La app compara patentes con reportes de vecinos y te ayuda a verificarlas en la fuente oficial.</li>
+          <li>Una coincidencia <b>no</b> prueba que un auto sea robado.</li>
+          <li><b>Nunca intervengas ni confrontes a nadie.</b> Si corresponde, llama al 133.</li>
+          <li>No se piden nombres ni datos personales. La app no guarda fotos, ubicación ni qué patentes consultas.</li>
+        </ul>
+      </div>
+      <div id="iNickBloque">
+        <label for="iNick">Elige tu nick (es lo único que verán los moderadores)</label>
+        <input id="iNick" maxlength="20" placeholder="Ej: vecino_pasaje3">
+      </div>
+      <label class="check"><input type="checkbox" id="iAcepto"> Entiendo y acepto usar la app de forma responsable</label>
+      <p id="iAviso" class="m" hidden></p>
+    </div>
+    <p id="iInfo" class="info"></p>
     <div class="fila">
-      <button type="button" id="cfgCancelar" class="ghost">Cerrar</button>
-      <button type="submit" class="primary">Guardar y actualizar base</button>
+      <button type="button" id="iRechazar" class="ghost" hidden>Rechazar</button>
+      <button type="button" id="iCerrar" class="ghost">Cerrar</button>
+      <button type="submit" id="iAceptar" class="primary" hidden>Aceptar</button>
     </div>
   </form>
 </dialog>
@@ -263,7 +338,8 @@
   <div class="tabs">
     <button data-tab="Pend" class="on">Pendientes <b id="nPend"></b></button>
     <button data-tab="Avisos">Avisos <b id="nAv"></b></button>
-    <button data-tab="Nuevo">Nuevo reporte</button>
+    <button data-tab="Nuevo">Nuevo</button>
+    <button data-tab="Usuarios">Usuarios <b id="nUsu"></b></button>
   </div>
   <section id="tabPend">
     <p class="ayuda">Reportes que aún no se verifican en fuente oficial, o cuya verificación tiene más de 30 días.
@@ -293,12 +369,34 @@
       <button type="submit" class="primary" style="width:100%">Guardar reporte</button>
     </form>
   </section>
+  <section id="tabUsuarios" hidden>
+    <form id="frmInvitar" class="caja" autocomplete="off">
+      <b>Invitar a alguien</b>
+      <div class="fila">
+        <select id="uRol" aria-label="Rol">
+          <option value="Vecino">Vecino</option>
+          <option value="Enlace">Enlace</option>
+          <option value="Moderador">Moderador</option>
+        </select>
+        <input id="uRef" maxlength="60" placeholder="Referencia (opcional)">
+      </div>
+      <p class="ayuda">La referencia te ayuda a reconocer la invitación (ej. «condominio Los Aromos»). Solo la ven los moderadores. Evita nombres completos.</p>
+      <button type="submit" class="primary" style="width:100%">Crear invitación</button>
+    </form>
+    <div id="uResultado" class="caja ok" hidden></div>
+    <h4>Invitaciones</h4>
+    <ul id="lstInv" class="lista"></ul>
+    <h4>Cuentas</h4>
+    <ul id="lstUsu" class="lista"></ul>
+  </section>
 </dialog>
 
 <div id="toast"></div>
 
 <script src="vendor/ort/ort.wasm.min.js"></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
+<script src="cuenta.js"></script>
 <script src="moderacion.js"></script>
 </body>
 </html>

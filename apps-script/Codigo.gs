@@ -1,37 +1,42 @@
 /**
- * Lector de patentes — puente entre la planilla y la app (versión 3: moderación)
+ * Lector de patentes — puente entre la planilla y la app (versión 4: cuentas por invitación)
  *
- * Consulta pública (doGet): entrega solo patente, nivel de alerta, estado, fechas,
- * placas sustraídas y marca/modelo/color. No entrega observaciones, fuentes, EUN
- * ni quién ingresó o verificó.
- * Moderación (doPost): solo con una clave de moderador de la hoja "Moderadores".
- * Cada cambio queda registrado en la hoja "Historial".
+ * - Cada persona tiene su cuenta (ID + nick, sin nombres ni contraseñas). Se entra con un
+ *   enlace de invitación de un solo uso que vence a las 48 horas; el teléfono queda vinculado.
+ * - Roles: Vecino → Enlace → Moderador → Administrador.
+ * - La base solo se entrega a cuentas habilitadas. NO se registra qué patentes consulta cada persona.
+ * - Cada acción administrativa queda en la hoja "Historial".
  *
  * INSTALACIÓN / ACTUALIZACIÓN:
- *   1. Escribe tu clave de consulta abajo, en CLAVE (después de ejecutar
- *      "prepararModeracion" queda guardada y en futuras actualizaciones ya no hace falta).
- *   2. Guarda (💾). Ejecuta UNA vez, en este orden, las funciones que aún no hayas ejecutado:
- *      prepararPlanilla → crearFormulario → prepararModeracion
+ *   1. Guarda (💾). Ejecuta UNA vez las funciones que aún no hayas ejecutado:
+ *      prepararPlanilla → crearFormulario → prepararCuentas
+ *   2. prepararCuentas muestra en el registro tu CÓDIGO DE ADMINISTRADOR (vence en 48 h).
+ *      Si se te pasa el plazo, ejecuta "codigoAdministrador" para generar otro.
  *   3. Implementar → Gestionar implementaciones → ✏️ → Versión: Nueva versión → Implementar.
  */
 
-// Clave de CONSULTA (la que usan todos los vecinos en la app)
-const CLAVE = 'cambia-esta-clave';
-const CLAVE_EJEMPLO = 'cambia-esta-clave';
-
 // Días que un reporte vecinal SIN verificación oficial sigue alertando.
 const DIAS_VIGENCIA_VECINAL = 30;
+// Horas de validez de un enlace de invitación.
+const HORAS_INVITACION = 48;
+// true = los vecinos invitados por un Enlace también necesitan aprobación de un moderador.
+const APROBACION_MODERADOR_VECINOS = false;
+
+const ROLES = ['Vecino', 'Enlace', 'Moderador', 'Administrador'];
+const rango = function (rol) { return ROLES.indexOf(rol); };
 
 // ---------------------------------------------------------------------------
-// Entrega de datos a la app
+// La versión anterior entregaba la base por GET con una clave compartida. Ya no.
 // ---------------------------------------------------------------------------
 function doGet(e) {
-  if (!e || !e.parameter || !claveConsulta() || e.parameter.k !== claveConsulta()) return json({ error: 'no autorizado' });
+  return json({ error: 'Esta versión funciona con cuentas por invitación. Actualiza la app.' });
+}
 
+/** Base de patentes para la app (solo cuentas habilitadas). */
+function construirBase() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const hoy = new Date();
   const salida = [];
-
   const rep = leerTabla(ss.getSheetByName('Reportes'));
   for (const r of rep) {
     const p = normalizar(r['Patente']);
@@ -69,15 +74,17 @@ function doGet(e) {
     salida.push({ p: p, n: 'prueba' });
   }
 
+
   const props = PropertiesService.getScriptProperties();
-  return json({
-    version: 3,
+  return {
+    ok: true,
+    version: 4,
     actualizado: new Date().toISOString(),
     vigenciaVecinal: DIAS_VIGENCIA_VECINAL,
     formulario: props.getProperty('FORM_URL') || '',
     total: salida.length,
     patentes: salida,
-  });
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -203,24 +210,45 @@ function crearFormulario() {
 }
 
 // ---------------------------------------------------------------------------
-// MODERACIÓN — la app envía POST con {accion, mod (clave del moderador), ...}
+// TODA la comunicación con la app: POST con {accion, token, ...}
 // ---------------------------------------------------------------------------
 function doPost(e) {
   let req;
   try { req = JSON.parse(e.postData.contents); } catch (err) { return json({ error: 'Solicitud inválida' }); }
-  const mod = moderador(req && req.mod);
-  if (!mod) return json({ error: 'Clave de moderador no válida o inactiva' });
-
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(20000);
+    // Acciones con código de invitación (aún sin sesión)
+    if (req.accion === 'invitacion') return json(accionVerInvitacion(req));
+    if (req.accion === 'aceptar') return json(accionAceptar(req));
+    if (req.accion === 'rechazar') return json(accionRechazar(req));
+
+    const u = usuarioDeToken(req.token);
+    if (!u) return json({ error: 'Este teléfono no tiene una cuenta válida. Pide un enlace nuevo a quien te invitó.', sesion: 'invalida' });
+    if (u.estado !== 'Habilitada') {
+      const msj = { 'Aceptada': 'Tu cuenta está esperando la aprobación de un moderador.',
+        'En análisis': 'Tu cuenta está en revisión. Consulta con quien te invitó.',
+        'Revocada': 'Tu acceso fue revocado.' }[u.estado] || 'Tu cuenta no está habilitada.';
+      return json({ error: msj, sesion: u.estado, perfil: perfilPublico(u) });
+    }
+    const actor = u.nick;
     switch (req.accion) {
-      case 'login': return json({ ok: true, nombre: mod });
-      case 'verificar': return json(accionVerificar(req, mod));
-      case 'nuevo': return json(accionNuevo(req, mod));
+      case 'perfil': return json({ ok: true, perfil: perfilPublico(u) });
+      case 'base': { const b = construirBase(); b.perfil = perfilPublico(u); return json(b); }
+    }
+    // Desde aquí, solo moderadores y administrador
+    exigirRol(u, 'Moderador');
+    switch (req.accion) {
+      case 'verificar': return json(accionVerificar(req, actor));
+      case 'nuevo': return json(accionNuevo(req, actor));
       case 'pendientes': return json(accionPendientes());
       case 'avisos': return json(accionAvisos());
-      case 'atender': return json(accionAtender(req, mod));
+      case 'atender': return json(accionAtender(req, actor));
+      case 'invitar': return json(accionInvitar(req, u));
+      case 'nuevoTelefono': return json(accionNuevoTelefono(req, u));
+      case 'usuarios': return json(accionUsuarios(u));
+      case 'estadoUsuario': return json(accionEstadoUsuario(req, u));
+      case 'anularInvitacion': return json(accionAnularInvitacion(req, u));
       default: return json({ error: 'Acción desconocida' });
     }
   } catch (err) {
@@ -230,17 +258,9 @@ function doPost(e) {
   }
 }
 
-/** Devuelve el nombre del moderador si la clave es válida y está activa. */
-function moderador(clave) {
-  clave = texto(clave);
-  if (!clave || clave === claveConsulta()) return null;
-  const filas = leerTabla(SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Moderadores'));
-  for (const f of filas) {
-    if (texto(f['Clave']) === clave && texto(f['Activo']) === 'Sí') return texto(f['Nombre']) || 'Moderador';
-  }
-  return null;
+function exigirRol(u, minimo) {
+  if (rango(u.rol) < rango(minimo)) throw new Error('Tu cuenta no tiene permiso para esta acción.');
 }
-
 /** Registra el resultado de una consulta en autoseguro.gob.cl */
 function accionVerificar(req, mod) {
   const p = validarPatente(req.patente);
@@ -382,55 +402,282 @@ function marcarAtendido(fila, mod, nota) {
 }
 
 // ---------------------------------------------------------------------------
-// Ejecutar UNA vez: hojas Moderadores e Historial, y guarda la clave de consulta
+// CUENTAS E INVITACIONES
+// Usuarios:     ID | Nick | Rol | Estado | Invitado por | Fecha alta | Token | Notas
+// Invitaciones: Código | Tipo | Rol | Usuario | Referencia | Creada | Vence | Creada por | Estado
 // ---------------------------------------------------------------------------
-function prepararModeracion() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const props = PropertiesService.getScriptProperties();
-  if (CLAVE !== CLAVE_EJEMPLO) props.setProperty('CLAVE', CLAVE);
-  if (!claveConsulta()) throw new Error('Primero escribe tu clave de consulta en CLAVE (arriba) y guarda.');
+const COL_USUARIOS = ['ID', 'Nick', 'Rol', 'Estado', 'Invitado por', 'Fecha alta', 'Token', 'Notas'];
+const COL_INVITACIONES = ['Código', 'Tipo', 'Rol', 'Usuario', 'Referencia', 'Creada', 'Vence', 'Creada por', 'Estado'];
 
-  let m = ss.getSheetByName('Moderadores');
-  if (!m) {
-    m = ss.insertSheet('Moderadores');
-    m.getRange(1, 1, 1, 3).setValues([['Nombre', 'Clave', 'Activo']]).setFontWeight('bold');
-    const clave = nuevaClave();
-    m.getRange(2, 1, 1, 3).setValues([['José', clave, 'Sí']]);
-    m.getRange(2, 3, 199, 1).setDataValidation(
-      SpreadsheetApp.newDataValidation().requireValueInList(['Sí', 'No'], true).build());
-    m.setColumnWidths(1, 3, 160);
-    m.getRange(4, 1).setValue('Para agregar un moderador: escribe su nombre, ejecuta la función "nuevaClaveModerador" ' +
-      'y copia la clave que aparece en el registro. Para quitarle el acceso: Activo = No.').setFontStyle('italic');
-    Logger.log('Tu clave de MODERADOR es: ' + clave + '  (también está en la hoja Moderadores)');
-  } else {
-    Logger.log('La hoja Moderadores ya existía. Tus claves están ahí.');
-  }
-  if (!ss.getSheetByName('Historial')) {
-    const h = ss.insertSheet('Historial');
-    h.getRange(1, 1, 1, 5).setValues([['Fecha y hora', 'Moderador', 'Acción', 'Patente', 'Detalle']]).setFontWeight('bold');
-    h.setColumnWidth(1, 140); h.setColumnWidth(5, 500); h.setFrozenRows(1);
-  }
-  const av = ss.getSheetByName('Avisos');
-  if (av) asegurarColumna(av, 'Atendido');
-  Logger.log('Moderación lista.');
+/** Ejecutar UNA vez: crea las hojas de cuentas y el código del administrador. */
+function prepararCuentas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  hojaCon('Usuarios', COL_USUARIOS);
+  hojaCon('Invitaciones', COL_INVITACIONES);
+  if (!ss.getSheetByName('Historial')) hojaCon('Historial', ['Fecha y hora', 'Quién', 'Acción', 'Patente', 'Detalle']);
+  const admin = tablaSimple('Usuarios').filas.some(function (f) { return f['Rol'] === 'Administrador' && f['Estado'] === 'Habilitada'; });
+  if (admin) { Logger.log('Ya existe un administrador habilitado. No se generó código.'); return; }
+  codigoAdministrador();
+  if (ss.getSheetByName('Moderadores')) Logger.log('La hoja "Moderadores" ya no se usa: puedes borrarla.');
 }
 
-/** Genera una clave nueva para entregar a un moderador (cópiala en la hoja Moderadores). */
-function nuevaClaveModerador() {
-  Logger.log('Clave nueva: ' + nuevaClave());
+/** Genera un código de invitación para la cuenta de Administrador (úsalo si se venció el anterior). */
+function codigoAdministrador() {
+  const inv = crearInvitacion('Nueva cuenta', 'Administrador', '', 'Administrador (instalación)', 'Instalación');
+  Logger.log('TU CÓDIGO DE ADMINISTRADOR: ' + inv.codigo);
+  Logger.log('En la app: ⚙ → "Tengo una invitación" → pega el código. Vence en ' + HORAS_INVITACION + ' horas.');
+}
+
+function accionVerInvitacion(req) {
+  const t = tablaSimple('Invitaciones'), k = filaInvitacion(t, req.codigo);
+  if (k < 0) return { error: 'La invitación no existe. Revisa el enlace.' };
+  const inv = t.filas[k], est = estadoInvitacion(t, k);
+  if (est !== 'Pendiente') return { error: mensajeInvitacion(est) };
+  return { ok: true, tipo: inv['Tipo'], rol: inv['Rol'], vence: iso(inv['Vence']),
+    nick: inv['Tipo'] === 'Nuevo teléfono' ? nickDe(inv['Usuario']) : '' };
+}
+
+function accionAceptar(req) {
+  const t = tablaSimple('Invitaciones'), k = filaInvitacion(t, req.codigo);
+  if (k < 0) throw new Error('La invitación no existe. Revisa el enlace.');
+  const est = estadoInvitacion(t, k);
+  if (est !== 'Pendiente') throw new Error(mensajeInvitacion(est));
+  const inv = t.filas[k];
+  const us = tablaSimple('Usuarios');
+  const token = nuevoToken();
+  let j;
+
+  if (inv['Tipo'] === 'Nuevo teléfono') {
+    j = filaUsuario(us, inv['Usuario']);
+    if (j < 0 || us.filas[j]['Estado'] === 'Revocada') throw new Error('La cuenta asociada ya no está disponible.');
+    escribirFila(us, j, { 'Token': hash(token) });
+    registrarHistorial(us.filas[j]['Nick'], 'Nuevo teléfono vinculado', '', 'Cuenta ' + inv['Usuario']);
+  } else {
+    const nick = validarNick(req.nick, us);
+    const creador = filaUsuario(us, inv['Creada por']);
+    const rolCreador = creador >= 0 ? us.filas[creador]['Rol'] : 'Administrador';
+    let estado = 'Habilitada';
+    if (inv['Rol'] === 'Vecino' && APROBACION_MODERADOR_VECINOS && rango(rolCreador) < rango('Moderador')) estado = 'Aceptada';
+    if (inv['Rol'] === 'Enlace' && rango(rolCreador) < rango('Moderador')) estado = 'Aceptada';
+    const id = siguienteId(us);
+    j = us.filas.length;
+    escribirFila(us, j, { 'ID': id, 'Nick': nick, 'Rol': inv['Rol'], 'Estado': estado,
+      'Invitado por': texto(inv['Creada por']), 'Fecha alta': new Date(), 'Token': hash(token) });
+    escribirFila(t, k, { 'Usuario': id });
+    registrarHistorial(nick, 'Invitación aceptada', '', id + ' · ' + inv['Rol'] + ' · ' + estado + ' · invitado por ' + nickDe(inv['Creada por']));
+  }
+  escribirFila(t, k, { 'Estado': 'Aceptada' });
+  const u = usuarioDeFila(tablaSimple('Usuarios'), j);
+  return { ok: true, token: token, perfil: perfilPublico(u) };
+}
+
+function accionRechazar(req) {
+  const t = tablaSimple('Invitaciones'), k = filaInvitacion(t, req.codigo);
+  if (k < 0 || estadoInvitacion(t, k) !== 'Pendiente') return { ok: true };
+  escribirFila(t, k, { 'Estado': 'Rechazada' });
+  registrarHistorial('(invitado)', 'Invitación rechazada', '', texto(t.filas[k]['Referencia']));
+  return { ok: true };
+}
+
+function accionInvitar(req, u) {
+  const rol = texto(req.rol) || 'Vecino';
+  if (rango(rol) < 0 || rol === 'Administrador') throw new Error('Rol no válido');
+  if (rol === 'Moderador') exigirRol(u, 'Administrador');
+  const inv = crearInvitacion('Nueva cuenta', rol, '', limpiarTexto(req.referencia, 60), u.id);
+  registrarHistorial(u.nick, 'Invitación creada', '', rol + (inv.referencia ? ' · ' + inv.referencia : ''));
+  return { ok: true, codigo: inv.codigo, vence: iso(inv.vence), rol: rol };
+}
+
+function accionNuevoTelefono(req, u) {
+  const us = tablaSimple('Usuarios'), j = filaUsuario(us, req.usuario);
+  if (j < 0) throw new Error('Cuenta no encontrada');
+  const obj = us.filas[j];
+  if (obj['Estado'] === 'Revocada') throw new Error('La cuenta está revocada.');
+  if (obj['ID'] !== u.id && rango(obj['Rol']) >= rango(u.rol)) throw new Error('No puedes gestionar una cuenta de tu mismo rango o superior.');
+  // Anula enlaces de teléfono anteriores aún pendientes para esa cuenta
+  const t = tablaSimple('Invitaciones');
+  t.filas.forEach(function (f, k) {
+    if (f['Tipo'] === 'Nuevo teléfono' && f['Usuario'] === obj['ID'] && estadoInvitacion(t, k) === 'Pendiente') escribirFila(t, k, { 'Estado': 'Anulada' });
+  });
+  const inv = crearInvitacion('Nuevo teléfono', obj['Rol'], obj['ID'], 'Nuevo teléfono de ' + obj['Nick'], u.id);
+  registrarHistorial(u.nick, 'Enlace de nuevo teléfono', '', obj['Nick'] + ' (' + obj['ID'] + ')');
+  return { ok: true, codigo: inv.codigo, vence: iso(inv.vence), nick: obj['Nick'] };
+}
+
+function accionUsuarios(u) {
+  const us = tablaSimple('Usuarios'), t = tablaSimple('Invitaciones');
+  const nicks = {};
+  us.filas.forEach(function (f) { nicks[f['ID']] = f['Nick']; });
+  const usuarios = us.filas.filter(function (f) { return texto(f['ID']); }).map(function (f) {
+    return { id: f['ID'], nick: f['Nick'], rol: f['Rol'], estado: f['Estado'], alta: fecha(f['Fecha alta']),
+      invitadoPor: nicks[f['Invitado por']] || texto(f['Invitado por']),
+      gestionable: f['ID'] !== u.id && rango(f['Rol']) < rango(u.rol) };
+  });
+  const invitaciones = [];
+  for (let k = t.filas.length - 1; k >= 0 && invitaciones.length < 100; k--) {
+    const f = t.filas[k];
+    if (!texto(f['Código'])) continue;
+    const est = estadoInvitacion(t, k);
+    invitaciones.push({ codigo: est === 'Pendiente' ? f['Código'] : '', tipo: f['Tipo'], rol: f['Rol'], estado: est,
+      referencia: texto(f['Referencia']), creada: fecha(f['Creada']), vence: iso(f['Vence']),
+      creadaPor: nicks[f['Creada por']] || texto(f['Creada por']), usuario: nicks[f['Usuario']] || '' });
+  }
+  return { ok: true, usuarios: usuarios, invitaciones: invitaciones };
+}
+
+function accionEstadoUsuario(req, u) {
+  const nuevo = texto(req.estado);
+  if (['Habilitada', 'En análisis', 'Revocada'].indexOf(nuevo) < 0) throw new Error('Estado no válido');
+  const us = tablaSimple('Usuarios'), j = filaUsuario(us, req.usuario);
+  if (j < 0) throw new Error('Cuenta no encontrada');
+  const obj = us.filas[j];
+  if (obj['ID'] === u.id) throw new Error('No puedes cambiar el estado de tu propia cuenta.');
+  if (rango(obj['Rol']) >= rango(u.rol)) throw new Error('No puedes gestionar una cuenta de tu mismo rango o superior.');
+  const anterior = texto(obj['Estado']);
+  const cambios = { 'Estado': nuevo };
+  if (texto(req.nota)) cambios['Notas'] = agregarNota(obj['Notas'], u.nick, req.nota);
+  escribirFila(us, j, cambios);
+  registrarHistorial(u.nick, 'Cuenta: ' + anterior + ' → ' + nuevo, '', obj['Nick'] + ' (' + obj['ID'] + ')' + (texto(req.nota) ? ' · ' + texto(req.nota) : ''));
+  return { ok: true, mensaje: obj['Nick'] + ': ' + nuevo + '.' };
+}
+
+function accionAnularInvitacion(req, u) {
+  const t = tablaSimple('Invitaciones'), k = filaInvitacion(t, req.codigo);
+  if (k < 0 || estadoInvitacion(t, k) !== 'Pendiente') throw new Error('La invitación ya no está pendiente.');
+  escribirFila(t, k, { 'Estado': 'Anulada' });
+  registrarHistorial(u.nick, 'Invitación anulada', '', texto(t.filas[k]['Referencia']));
+  return { ok: true, mensaje: 'Invitación anulada.' };
+}
+
+// ---- utilidades de cuentas ----
+function crearInvitacion(tipo, rol, usuario, referencia, creadaPor) {
+  const t = tablaSimple('Invitaciones');
+  const codigo = nuevoCodigo(), creada = new Date(), vence = new Date(creada.getTime() + HORAS_INVITACION * 3600000);
+  escribirFila(t, t.filas.length, { 'Código': codigo, 'Tipo': tipo, 'Rol': rol, 'Usuario': usuario, 'Referencia': referencia,
+    'Creada': creada, 'Vence': vence, 'Creada por': creadaPor, 'Estado': 'Pendiente' });
+  return { codigo: codigo, vence: vence, referencia: referencia };
+}
+
+/** Estado real de una invitación (marca como Vencida las pendientes con plazo cumplido). */
+function estadoInvitacion(t, k) {
+  const f = t.filas[k], est = texto(f['Estado']);
+  if (est === 'Pendiente' && f['Vence'] instanceof Date && new Date() > f['Vence']) {
+    escribirFila(t, k, { 'Estado': 'Vencida' });
+    return 'Vencida';
+  }
+  return est;
+}
+
+function mensajeInvitacion(est) {
+  return { 'Aceptada': 'Esta invitación ya fue usada.', 'Vencida': 'Esta invitación venció. Pide una nueva a quien te invitó.',
+    'Rechazada': 'Esta invitación fue rechazada.', 'Anulada': 'Esta invitación fue anulada.' }[est] || 'Invitación no válida.';
+}
+
+function usuarioDeToken(token) {
+  token = texto(token);
+  if (token.length < 32) return null;
+  const h = hash(token), us = tablaSimple('Usuarios');
+  for (let j = 0; j < us.filas.length; j++) if (us.filas[j]['Token'] === h) return usuarioDeFila(us, j);
+  return null;
+}
+
+function usuarioDeFila(us, j) {
+  const f = us.filas[j];
+  return { j: j, id: texto(f['ID']), nick: texto(f['Nick']), rol: texto(f['Rol']), estado: texto(f['Estado']) };
+}
+
+function perfilPublico(u) { return { id: u.id, nick: u.nick, rol: u.rol, estado: u.estado }; }
+
+function filaUsuario(us, id) {
+  id = texto(id);
+  for (let j = 0; j < us.filas.length; j++) if (texto(us.filas[j]['ID']) === id && id) return j;
+  return -1;
+}
+
+function filaInvitacion(t, codigo) {
+  const c = String(codigo || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (c.length < 8) return -1;
+  for (let k = 0; k < t.filas.length; k++) if (texto(t.filas[k]['Código']).replace(/-/g, '') === c) return k;
+  return -1;
+}
+
+function nickDe(id) {
+  const us = tablaSimple('Usuarios'), j = filaUsuario(us, id);
+  return j >= 0 ? us.filas[j]['Nick'] : texto(id);
+}
+
+function validarNick(v, us) {
+  const n = texto(v);
+  if (!/^[A-Za-zÁÉÍÓÚÑáéíóúñ0-9._\- ]{3,20}$/.test(n)) throw new Error('El nick debe tener entre 3 y 20 caracteres (letras, números, punto, guion).');
+  const b = n.toLowerCase();
+  if (us.filas.some(function (f) { return texto(f['Nick']).toLowerCase() === b; })) throw new Error('Ese nick ya está en uso. Elige otro.');
+  return n;
+}
+
+function siguienteId(us) {
+  let max = 0;
+  us.filas.forEach(function (f) { const m = /^U(\d+)$/.exec(texto(f['ID'])); if (m) max = Math.max(max, +m[1]); });
+  return 'U' + ('000' + (max + 1)).slice(-4);
+}
+
+/** Código legible, sin caracteres que se confunden (sin 0/O, 1/I/L). */
+function nuevoCodigo() {
+  const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const hex = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  let c = '';
+  for (let i = 0; i < 12; i++) c += abc[parseInt(hex.substr(i * 2, 2), 16) % abc.length];
+  return c.slice(0, 4) + '-' + c.slice(4, 8) + '-' + c.slice(8, 12);
+}
+
+function nuevoToken() {
+  return (Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+}
+
+function hash(s) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(s), Utilities.Charset.UTF_8)
+    .map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+}
+
+function iso(v) { return v instanceof Date ? v.toISOString() : texto(v); }
+function limpiarTexto(v, max) { return texto(v).replace(/[\r\n\t]+/g, ' ').slice(0, max); }
+
+/** Tabla genérica: {sh, enc, col, filas:[{Encabezado: valor}]} — filas[k] corresponde a la fila k+2 de la hoja. */
+function tablaSimple(nombre) {
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nombre);
+  if (!sh) throw new Error('Falta la hoja ' + nombre + '. ¿Ejecutaste prepararCuentas?');
+  const v = sh.getDataRange().getValues(), enc = v[0].map(function (h) { return String(h).trim(); });
+  const col = {}; enc.forEach(function (h, i) { if (h) col[h] = i; });
+  let ultima = v.length - 1;
+  while (ultima >= 1 && v[ultima].every(function (x) { return x === '' || x === null; })) ultima--;
+  const filas = v.slice(1, ultima + 1).map(function (f) { const o = {}; enc.forEach(function (h, i) { if (h) o[h] = f[i]; }); return o; });
+  return { sh: sh, enc: enc, col: col, filas: filas };
+}
+
+function escribirFila(t, k, cambios) {
+  if (!t.filas[k]) t.filas[k] = {};
+  Object.keys(cambios).forEach(function (h) {
+    const c = t.col[h];
+    if (c === undefined) throw new Error('Falta la columna "' + h + '" en ' + t.sh.getName());
+    const v = cambios[h];
+    t.sh.getRange(k + 2, c + 1).setValue(v instanceof Date ? v : seguro(v));
+    t.filas[k][h] = v;
+  });
+}
+
+function hojaCon(nombre, columnas) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(nombre);
+  if (!sh) {
+    sh = ss.insertSheet(nombre);
+    sh.getRange(1, 1, 1, columnas.length).setValues([columnas]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
+  return sh;
 }
 
 // ---------------------------------------------------------------------------
 // Utilidades de escritura
 // ---------------------------------------------------------------------------
-function claveConsulta() {
-  if (CLAVE && CLAVE !== CLAVE_EJEMPLO) return CLAVE;
-  return PropertiesService.getScriptProperties().getProperty('CLAVE') || '';
-}
-
-function nuevaClave() {
-  return Utilities.getUuid().replace(/-/g, '').slice(0, 10);
-}
 
 function tabla(nombre) {
   const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(nombre);
@@ -510,7 +757,7 @@ function registrarHistorial(mod, accion, p, detalle) {
   let h = ss.getSheetByName('Historial');
   if (!h) {
     h = ss.insertSheet('Historial');
-    h.getRange(1, 1, 1, 5).setValues([['Fecha y hora', 'Moderador', 'Acción', 'Patente', 'Detalle']]);
+    h.getRange(1, 1, 1, 5).setValues([['Fecha y hora', 'Quién', 'Acción', 'Patente', 'Detalle']]);
   }
   h.appendRow([new Date(), mod, accion, p, seguro(detalle)]);
 }
