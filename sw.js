@@ -1,6 +1,6 @@
 // Service worker: guarda la app y los modelos para que funcione sin señal.
 // Cambia VERSION cada vez que se publiquen cambios para forzar la actualización.
-const VERSION = 'lp-v4';
+const VERSION = 'lp-v5';
 const ARCHIVOS = [
   './', 'index.html', 'config.js', 'app.js', 'cuenta.js', 'moderacion.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png',
